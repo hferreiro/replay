@@ -580,8 +580,7 @@ void traceTaskCreate_ (Task       *task,
 {
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
-        /* We currently don't do debug tracing of tasks but we must
-           test for TRACE_STDERR because of the !eventlog_enabled case. */
+        debugBelch("cap %d: task %d created\n", cap->no, task->no);
     } else
 #endif
     {
@@ -611,8 +610,7 @@ void traceTaskDelete_ (Task *task)
 {
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
-        /* We currently don't do debug tracing of tasks but we must
-           test for TRACE_STDERR because of the !eventlog_enabled case. */
+        debugBelch("task %d deleted\n", task->no);
     } else
 #endif
     {
