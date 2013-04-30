@@ -249,7 +249,7 @@ schedule (Capability *initialCapability, Task *task)
     case SCHED_RUNNING:
 	break;
     case SCHED_INTERRUPTING:
-	debugTrace(DEBUG_sched, "SCHED_INTERRUPTING");
+	debugTrace(DEBUG_sched, "task %d: SCHED_INTERRUPTING", task->no);
         /* scheduleDoGC() deletes all the threads */
         scheduleDoGC(&cap,task,rtsFalse);
 
@@ -261,7 +261,7 @@ schedule (Capability *initialCapability, Task *task)
         // fall through
 
     case SCHED_SHUTTING_DOWN:
-	debugTrace(DEBUG_sched, "SCHED_SHUTTING_DOWN");
+	debugTrace(DEBUG_sched, "task %d: SCHED_SHUTTING_DOWN", task->no);
 	// If we are a worker, just exit.  If we're a bound thread
 	// then we will exit below when we've removed our TSO from
 	// the run queue.

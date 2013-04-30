@@ -124,6 +124,7 @@ typedef struct Task_ {
     // thread is already running, but we want it to be sticky.
     rtsBool wakeup;
 #endif
+    nat no;
 
     // This points to the Capability that the Task "belongs" to.  If
     // the Task owns a Capability, then task->cap points to it.  If
@@ -288,42 +289,13 @@ setMyTask (Task *task)
 // to StgWord64, as defined below.
 typedef StgWord64 TaskId;
 
-// Get a unique serialisable representation for a task id.
-//
-// It's only unique within the process. For example if they are emitted in a
-// log file then it is suitable to work out which log entries are releated.
-//
-// This is needed because OSThreadId is an opaque type
-// and in practice on some platforms it is a pointer type.
-//
-#if defined(THREADED_RTS)
-INLINE_HEADER TaskId serialiseTaskId (OSThreadId taskID) {
-#if defined(freebsd_HOST_OS) || defined(darwin_HOST_OS)
-    // Here OSThreadId is a pthread_t and pthread_t is a pointer, but within
-    // the process we can still use that pointer value as a unique id.
-    return (TaskId) (size_t) taskID;
-#else
-    // On Windows, Linux and others it's an integral type to start with.
-    return (TaskId) taskID;
-#endif
-}
-#endif
-
 //
 // Get a serialisable Id for the Task's OS thread
 // Needed mainly for logging since the OSThreadId is an opaque type
 INLINE_HEADER TaskId
-serialisableTaskId (Task *task
-#if !defined(THREADED_RTS)
-                               STG_UNUSED
-#endif
-                                         )
+serialisableTaskId (Task *task)
 {
-#if defined(THREADED_RTS)
-    return serialiseTaskId(task->id);
-#else
-    return (TaskId) (size_t) task;
-#endif
+    return task->no;
 }
 
 #include "EndPrivate.h"

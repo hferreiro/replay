@@ -421,7 +421,7 @@ giveCapabilityToTask (Capability *cap USED_IF_DEBUG, Task *task)
 {
     ASSERT_LOCK_HELD(&cap->lock);
     ASSERT(task->cap == cap);
-    debugTrace(DEBUG_sched, "passing capability %d to %s %#" FMT_HexWord64,
+    debugTrace(DEBUG_sched, "passing capability %d to %s %d",
                cap->no, task->incall->tso ? "bound task" : "worker",
                serialisableTaskId(task));
     ACQUIRE_LOCK(&task->lock);
@@ -470,7 +470,7 @@ releaseCapability_ (Capability* cap,
     // call waitForReturnCapability().
     if (pending_sync != 0 && pending_sync != SYNC_GC_PAR) {
       last_free_capability = cap; // needed?
-      debugTrace(DEBUG_sched, "sync pending, set capability %d free", cap->no);
+      debugTrace(DEBUG_sched, "task %d: sync pending, set capability %d free", task->no, cap->no);
       return;
     } 
 
@@ -516,7 +516,7 @@ releaseCapability_ (Capability* cap,
     cap->r.rCCCS = CCS_IDLE;
 #endif
     last_free_capability = cap;
-    debugTrace(DEBUG_sched, "freeing capability %d", cap->no);
+    debugTrace(DEBUG_sched, "task %d: freeing capability %d", task->no, cap->no);
 }
 
 void
@@ -630,7 +630,7 @@ waitForReturnCapability (Capability **pCap, Task *task)
 
     ACQUIRE_LOCK(&cap->lock);
 
-    debugTrace(DEBUG_sched, "returning; I want capability %d", cap->no);
+    debugTrace(DEBUG_sched, "task %d returning; I want capability %d", task->no, cap->no);
 
     if (!cap->running_task) {
 	// It's free; just grab it
@@ -672,7 +672,7 @@ waitForReturnCapability (Capability **pCap, Task *task)
 
     ASSERT_FULL_CAPABILITY_INVARIANTS(cap, task);
 
-    debugTrace(DEBUG_sched, "resuming capability %d", cap->no);
+    debugTrace(DEBUG_sched, "task %d: resuming capability %d", task->no, cap->no);
 
     *pCap = cap;
 #endif
@@ -701,7 +701,7 @@ yieldCapability (Capability** pCap, Task *task, rtsBool gcAllowed)
         }
     }
 
-	debugTrace(DEBUG_sched, "giving up capability %d", cap->no);
+	debugTrace(DEBUG_sched, "task %d: giving up capability %d", task->no, cap->no);
 
 	// We must now release the capability and wait to be woken up
 	// again.
@@ -716,12 +716,12 @@ yieldCapability (Capability** pCap, Task *task, rtsBool gcAllowed)
 	    task->wakeup = rtsFalse;
 	    RELEASE_LOCK(&task->lock);
 
-	    debugTrace(DEBUG_sched, "woken up on capability %d", cap->no);
+	    debugTrace(DEBUG_sched, "task %d: woken up on capability %d", task->no, cap->no);
 
 	    ACQUIRE_LOCK(&cap->lock);
 	    if (cap->running_task != NULL) {
 		debugTrace(DEBUG_sched, 
-			   "capability %d is owned by another task", cap->no);
+			   "task %d: capability %d is owned by another task", task->no, cap->no);
 		RELEASE_LOCK(&cap->lock);
 		continue;
 	    }
@@ -729,7 +729,7 @@ yieldCapability (Capability** pCap, Task *task, rtsBool gcAllowed)
             if (task->cap != cap) {
                 // see Note [migrated bound threads]
                 debugTrace(DEBUG_sched,
-                           "task has been migrated to cap %d", task->cap->no);
+                           "task %d has been migrated to cap %d", task->no, task->cap->no);
 		RELEASE_LOCK(&cap->lock);
 		continue;
 	    }
@@ -753,7 +753,7 @@ yieldCapability (Capability** pCap, Task *task, rtsBool gcAllowed)
 	    break;
 	}
 
-        debugTrace(DEBUG_sched, "resuming capability %d", cap->no);
+        debugTrace(DEBUG_sched, "task %d: resuming capability %d", task->no, cap->no);
 	ASSERT(cap->running_task == task);
 
 #ifdef PROFILING
@@ -873,7 +873,7 @@ shutdownCapability (Capability *cap USED_IF_THREADS,
         ASSERT(sched_state == SCHED_SHUTTING_DOWN);
 
 	debugTrace(DEBUG_sched, 
-		   "shutting down capability %d, attempt %d", cap->no, i);
+		   "task %d: shutting down capability %d, attempt %d, safe %d", task->no, cap->no, i, safe);
 	ACQUIRE_LOCK(&cap->lock);
 	if (cap->running_task) {
 	    RELEASE_LOCK(&cap->lock);

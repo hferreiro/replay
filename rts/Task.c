@@ -231,6 +231,7 @@ newTask (rtsBool worker)
     }
     all_tasks = task;
 
+    task->no = taskCount;
     taskCount++;
     if (worker) {
         workerCount++;
