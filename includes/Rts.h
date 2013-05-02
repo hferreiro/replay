@@ -143,6 +143,14 @@ void _assertFail(const char *filename, unsigned int linenum)
 #define USED_IF_NOT_THREADS
 #endif
 
+#ifdef REPLAY
+#define USED_IF_REPLAY
+#define USED_IF_NOT_REPLAY STG_UNUSED
+#else
+#define USED_IF_NOT_REPLAY
+#define USED_IF_REPLAY STG_UNUSED
+#endif
+
 #define FMT_SizeT    "zu"
 #define FMT_HexSizeT "zx"
 

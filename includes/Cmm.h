@@ -35,6 +35,14 @@
  */
 #define CMINUSMINUS 1
 
+#if defined(DEBUG)
+#define TRACING
+#endif
+
+#if defined(TRACING)
+#define REPLAY
+#endif
+
 #include "ghcconfig.h"
 
 /* -----------------------------------------------------------------------------
