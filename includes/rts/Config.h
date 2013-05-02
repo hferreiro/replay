@@ -34,6 +34,10 @@
 #define TICKY_TICKY
 #endif
 
+#if defined(TRACING)
+#define REPLAY
+#endif
+
 /* -----------------------------------------------------------------------------
    Signals - supported on non-PAR versions of the runtime.  See RtsSignals.h.
    -------------------------------------------------------------------------- */
