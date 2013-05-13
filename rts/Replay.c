@@ -46,6 +46,33 @@ replayPrint(char *s USED_IF_DEBUG, ...)
 #endif
 }
 
+#if defined(DEBUG)
+static rtsBool
+nurseryReaches(bdescr *oldBd, bdescr *bd, StgPtr hp)
+{
+    ASSERT(oldBd);
+    ASSERT(HP_IN_BD(bd, hp));
+
+    if (oldBd != bd) {
+        bdescr *bd_ = oldBd->link;
+        while (bd_ != bd) {
+            if (bd_ == NULL)
+                return rtsFalse;
+            bd_ = bd_->link;
+        }
+    }
+    return rtsTrue;
+}
+
+void
+replayCheckGCGeneric(StgPtr Hp, Capability *cap, StgPtr HpLim STG_UNUSED, bdescr *CurrentNursery)
+{
+    if (cap->replay.last_bd) {
+        ASSERT(nurseryReaches(cap->replay.last_bd, CurrentNursery, Hp));
+    }
+}
+#endif
+
 // Saves current block and heap pointer. It is meant to be called just
 // before running Haskell code (StgRun, resumeThread).
 void
