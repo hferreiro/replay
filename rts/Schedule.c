@@ -460,9 +460,15 @@ run_thread:
     case ThreadRunGHC:
     {
 	StgRegTable *r;
+#if defined(DEBUG)
+        // TODO-H: need to make share that allocation counts are ok when we
+        // change capability
+	nat cap_no = cap->no;
+#endif
 	r = StgRun((StgFunPtr) stg_returnToStackTop, &cap->r);
 	cap = regTableToCapability(r);
 	ret = r->rRet;
+        ASSERT(cap_no == cap->no);
 	break;
     }
     
@@ -2198,6 +2204,8 @@ suspendThread (StgRegTable *reg, rtsBool interruptible)
   task = cap->running_task;
   tso = cap->r.rCurrentTSO;
 
+  replayPrint("THREAD_SUSPENDED_FOREIGN_CALL\n");
+
   traceEventStopThread(cap, tso, THREAD_SUSPENDED_FOREIGN_CALL, 0);
 
   // XXX this might not be necessary --SDM
@@ -2264,6 +2272,8 @@ resumeThread (void *task_)
     incall->suspended_tso = NULL;
     incall->suspended_cap = NULL;
     tso->_link = END_TSO_QUEUE; // no write barrier reqd
+
+    replayPrint("resumeThread\n");
 
     traceEventRunThread(cap, tso);
     

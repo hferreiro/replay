@@ -20,6 +20,7 @@
 #include "eventlog/EventLog.h"
 #include "Threads.h"
 #include "Printer.h"
+#include "Replay.h"
 
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
@@ -56,7 +57,7 @@ int TRACE_user;
 static Mutex trace_utx;
 #endif
 
-static rtsBool eventlog_enabled;
+rtsBool eventlog_enabled;
 
 /* ---------------------------------------------------------------------------
    Starting up / shuttting down the tracing facilities
@@ -253,6 +254,12 @@ void traceSchedEvent_ (Capability *cap, EventTypeNum tag,
 #endif
     {
         postSchedEvent(cap,tag,tso ? tso->id : 0, info1, info2);
+
+        if (tag == EVENT_RUN_THREAD) {
+            replaySaveHp(cap);
+        } else if (tag == EVENT_STOP_THREAD) {
+            replaySaveAlloc(cap, info1);
+        }
     }
 }
 
@@ -765,6 +772,29 @@ void traceEventStartup_(int nocaps)
         postEventStartup(nocaps);
     }
 }
+
+#ifdef REPLAY
+void traceCapAlloc_(Capability *cap USED_IF_DEBUG,
+                    W_          alloc USED_IF_DEBUG,
+                    W_          blocks USED_IF_DEBUG,
+                    W_          hp_alloc USED_IF_DEBUG)
+{
+#ifdef DEBUG
+    if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
+        traceBegin("cap %d: alloc: %" FMT_Word
+                        ", blocks: %" FMT_Word
+                       ", hp_alloc: %" FMT_Word,
+                   cap->no, alloc, blocks, hp_alloc);
+        traceEnd();
+    } else
+#endif
+    {
+        if (eventlog_enabled) {
+            postCapAllocEvent(cap, alloc, blocks, hp_alloc);
+        }
+    }
+}
+#endif
 
 #ifdef DEBUG
 void traceBegin (const char *str, ...)

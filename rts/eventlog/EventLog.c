@@ -107,6 +107,7 @@ char *EventDesc[] = {
   [EVENT_TASK_MIGRATE]        = "Task migrate",
   [EVENT_TASK_DELETE]         = "Task delete",
   [EVENT_HACK_BUG_T9003]      = "Empty event for bug #9003",
+  [EVENT_CAP_ALLOC]           = "Capability allocation",
 };
 
 // Event type. 
@@ -423,6 +424,10 @@ initEventLogging(void)
 
         case EVENT_HACK_BUG_T9003:
             eventTypes[t].size = 0;
+            break;
+
+        case EVENT_CAP_ALLOC:
+            eventTypes[t].size = sizeof(StgWord64) * 3;
             break;
 
         default:
@@ -1131,6 +1136,26 @@ void postThreadLabel(Capability    *cap,
     postPayloadSize(eb, size);
     postThreadID(eb, id);
     postBuf(eb, (StgWord8*) label, strsize);
+}
+
+void postCapAllocEvent(Capability *cap,
+                       W_          alloc,
+                       W_          blocks,
+                       W_          hp_alloc)
+{
+    EventsBuf *eb;
+
+    eb = &capEventBuf[cap->no];
+
+    if (!hasRoomForEvent(eb, EVENT_CAP_ALLOC)) {
+        printAndClearEventBuf(eb);
+    }
+
+    postEventHeader(eb, EVENT_CAP_ALLOC);
+
+    postWord64(eb, alloc);
+    postWord64(eb, blocks);
+    postWord64(eb, hp_alloc);
 }
 
 void closeBlockMarker (EventsBuf *ebuf)

@@ -255,6 +255,13 @@ initCapability( Capability *cap, nat i )
     cap->spark_stats.converted  = 0;
     cap->spark_stats.gcd        = 0;
     cap->spark_stats.fizzled    = 0;
+#if defined(REPLAY)
+    cap->replay.last_hp    = NULL;
+    cap->replay.last_bd    = NULL;
+    cap->replay.alloc      = 0;
+    cap->replay.real_alloc = 0;
+    cap->replay.blocks     = 0;
+#endif
 #endif
     cap->total_allocated        = 0;
 

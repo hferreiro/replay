@@ -24,6 +24,7 @@
 #include "sm/GC.h" // for evac_fn
 #include "Task.h"
 #include "Sparks.h"
+#include "Replay.h"
 
 #include "BeginPrivate.h"
 
@@ -122,6 +123,11 @@ struct Capability_ {
     // Stats on spark creation/conversion
     SparkCounters spark_stats;
 #endif
+
+#if defined(REPLAY)
+    ReplayData replay;
+#endif
+
     // Total words allocated by this cap since rts start
     W_ total_allocated;
 

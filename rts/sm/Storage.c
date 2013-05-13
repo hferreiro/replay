@@ -723,6 +723,9 @@ StgPtr allocate (Capability *cap, W_ n)
         bd->flags = BF_LARGE;
         bd->free = bd->start + n;
         cap->total_allocated += n;
+#ifdef REPLAY
+        cap->replay.real_alloc += n;
+#endif
         return bd->start;
     }
 
@@ -786,6 +789,10 @@ StgPtr allocate (Capability *cap, W_ n)
     p = bd->free;
     bd->free += n;
 
+#ifdef REPLAY
+    cap->replay.real_alloc += n;
+#endif
+
     IF_DEBUG(sanity, ASSERT(*((StgWord8*)p) == 0xaa));
     return p;
 }
@@ -843,6 +850,9 @@ allocatePinned (Capability *cap, W_ n)
             dbl_link_onto(bd, &cap->pinned_object_blocks);
             // add it to the allocation stats when the block is full
             cap->total_allocated += bd->free - bd->start;
+#ifdef REPLAY
+            cap->replay.real_alloc += bd->free - bd->start;
+#endif
         }
 
         // We need to find another block.  We could just allocate one,

@@ -23,6 +23,7 @@
 // -----------------------------------------------------------------------------
 
 #if defined(TRACING)
+extern rtsBool eventlog_enabled;
 
 void initTracing (void);
 void endTracing  (void);
@@ -277,6 +278,11 @@ void traceTaskMigrate_ (Task       *task,
 
 void traceTaskDelete_ (Task       *task);
 
+/*
+ * Events related to Execution Replay
+ */
+void traceCapAlloc_ (Capability *cap, W_ alloc, W_ blocks, W_ hp_alloc);
+
 #else /* !TRACING */
 
 #define traceSchedEvent(cap, tag, tso, other) /* nothing */
@@ -307,6 +313,7 @@ INLINE_HEADER void traceEventStartup_ (int n_caps STG_UNUSED) {};
 #define traceTaskCreate_(taskID, cap) /* nothing */
 #define traceTaskMigrate_(taskID, cap, new_cap) /* nothing */
 #define traceTaskDelete_(taskID) /* nothing */
+#define traceCapAlloc_(cap, alloc, blocks, hp_alloc) /* nothing */
 
 #endif /* TRACING */
 
@@ -875,6 +882,14 @@ INLINE_HEADER void traceTaskDelete(Task *task STG_UNUSED)
         traceTaskDelete_(task);
     }
     dtraceTaskDelete(serialisableTaskId(task));
+}
+
+INLINE_HEADER void traceCapAlloc(Capability *cap USED_IF_TRACING,
+                                 W_          alloc USED_IF_TRACING,
+                                 W_          blocks USED_IF_TRACING,
+                                 W_          hp_alloc USED_IF_TRACING)
+{
+    traceCapAlloc_(cap, alloc, blocks, hp_alloc);
 }
 
 #include "EndPrivate.h"

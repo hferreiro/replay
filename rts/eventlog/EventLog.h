@@ -137,6 +137,11 @@ void postTaskMigrateEvent (EventTaskId taskId,
 
 void postTaskDeleteEvent (EventTaskId taskId);
 
+void postCapAllocEvent(Capability *cap,
+                       W_          alloc,
+                       W_          blocks,
+                       W_          hp_alloc);
+
 #else /* !TRACING */
 
 INLINE_HEADER void postSchedEvent (Capability *cap  STG_UNUSED,
