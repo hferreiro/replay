@@ -89,23 +89,23 @@ stg_gc_noregs
     DEBUG_ONLY(foreign "C" heapCheckFail());
     if (Hp > HpLim) {
         Hp = Hp - HpAlloc/*in bytes*/;
-        if (HpLim == 0) {
-                ret = ThreadYielding;
-                goto sched;
-        }
-        if (HpAlloc <= BLOCK_SIZE
+        DEBUG_ONLY(foreign "C" replayCheckGCGeneric(Hp, MyCapability(), HpLim, CurrentNursery));
+        if (Hp + HpAlloc >= bdescr_start(CurrentNursery) + BLOCK_SIZE
+            && HpAlloc <= BLOCK_SIZE
             && bdescr_link(CurrentNursery) != NULL) {
             HpAlloc = 0;
             CLOSE_NURSERY();
             CurrentNursery = bdescr_link(CurrentNursery);
             OPEN_NURSERY();
-            if (Capability_context_switch(MyCapability()) != 0 :: CInt ||
-                Capability_interrupt(MyCapability())      != 0 :: CInt) {
-                ret = ThreadYielding;
-                goto sched;
-            } else {
-                jump %ENTRY_CODE(Sp(0)) [];
-            }
+        }
+        if (HpLim == 0 ||
+            Capability_context_switch(MyCapability()) != 0 :: CInt ||
+            Capability_interrupt(MyCapability())      != 0 :: CInt) {
+            ret = ThreadYielding;
+            goto sched;
+        }
+        if (HpAlloc == 0) {
+            jump %ENTRY_CODE(Sp(0)) [];
         } else {
             ret = HeapOverflow;
             goto sched;
