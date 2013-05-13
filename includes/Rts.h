@@ -143,6 +143,14 @@ void _assertFail(const char *filename, unsigned int linenum)
 #define USED_IF_NOT_THREADS
 #endif
 
+#ifdef TRACING
+#define USED_IF_TRACING
+#define USED_IF_NOT_TRACING STG_UNUSED
+#else
+#define USED_IF_TRACING STG_UNUSED
+#define USED_IF_NOT_TRACING
+#endif
+
 #ifdef REPLAY
 #define USED_IF_REPLAY
 #define USED_IF_NOT_REPLAY STG_UNUSED
