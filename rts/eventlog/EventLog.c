@@ -14,8 +14,8 @@
 #include "Trace.h"
 #include "Capability.h"
 #include "RtsUtils.h"
-#include "Stats.h"
 #include "EventLog.h"
+#include "Event.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -53,6 +53,29 @@ EventsBuf eventBuf; // an EventsBuf not associated with any Capability
 #ifdef THREADED_RTS
 Mutex eventBufMutex; // protected by this mutex
 #endif
+
+// Replay definitions
+static char *eventLogFilenameReplay = NULL;
+
+FILE  *fileReplay = NULL;
+
+typedef struct _ReplayBuf {
+    EventsBuf eb;   // pos points to the next byte to read
+                    // marker points to the first empty position
+    FILE *f;        // each capability reads in different positions
+    Event *ev;      // current event
+} ReplayBuf;
+
+static ReplayBuf *capReplayBuf;
+static ReplayBuf  replayBuf;
+
+typedef struct _OrderedEvent {
+    CapEvent *ce;
+    struct _OrderedEvent *next;
+} OrderedEvent;
+
+static OrderedEvent *eventList = NULL;
+static nat eventListSize = 0;
 
 char *EventDesc[] = {
   [EVENT_CREATE_THREAD]       = "Create thread",
@@ -119,6 +142,8 @@ typedef struct _EventType {
 } EventType;
 
 EventType eventTypes[NUM_GHC_EVENT_TAGS];
+
+static StgBool initEventType(StgWord8 t);
 
 static void initEventsBuf(EventsBuf* eb, StgWord64 size, EventCapNo capno);
 static void resetEventsBuf(EventsBuf* eb);
@@ -208,6 +233,338 @@ static inline void postInt8(EventsBuf *eb, StgInt8 i)
 static inline void postInt32(EventsBuf *eb, StgInt32 i)
 { postWord32(eb, (StgWord32)i); }
 
+static inline int readWord8(ReplayBuf *rb, StgWord8 *i)
+{
+    FILE *f;
+    size_t r;
+
+    if (rb != NULL) {
+        f = rb->f;
+    } else {
+        f = fileReplay;
+    }
+    r = fread (i, 1, 1, f);
+
+    ASSERT(r == (size_t)1);
+    return (int)r;
+}
+
+static inline int readWord16(ReplayBuf *rb, StgWord16 *i)
+{
+    int r;
+
+    r = readWord8(rb, (StgWord8 *)i);
+    *i = *i << 8;
+    r += readWord8(rb, (StgWord8 *)i);
+
+    ASSERT(r == 2);
+    return r;
+}
+
+static inline int readWord32(ReplayBuf *rb, StgWord32 *i)
+{
+    int r;
+
+    r = readWord16(rb, (StgWord16 *)i);
+    *i = *i << 16;
+    r += readWord16(rb, (StgWord16 *)i);
+
+    ASSERT(r == 4);
+    return r;
+}
+
+static inline int readBuf(ReplayBuf *rb, StgWord8 *p, nat size)
+{
+    FILE *f;
+    size_t r;
+
+    if (rb != NULL) {
+        f = rb->f;
+    } else {
+        f = fileReplay;
+    }
+    r = fread(p, 1, size, f);
+
+    ASSERT(r == (size_t)size);
+    return (int)r;
+}
+
+static inline void readEventTypeNum(ReplayBuf *rb, EventTypeNum *etNum)
+{ readWord16(rb, etNum); }
+
+static inline void readCapNo(ReplayBuf *rb, EventCapNo *no)
+{ readWord16(rb, no); }
+
+static inline void readInt8(ReplayBuf *rb, StgInt8 *i)
+{ readWord8(rb, (StgWord8 *)i); }
+
+static inline void readInt32(ReplayBuf *rb, StgInt32 *i)
+{ readWord32(rb, (StgWord32 *)i); }
+
+static inline int skipSize(ReplayBuf *rb, long size)
+{
+
+    FILE *f;
+    int r;
+
+    if (rb != NULL) {
+        f = rb->f;
+    } else {
+        f = fileReplay;
+    }
+    r = fseek(f, size, SEEK_CUR);
+
+    ASSERT(r == 0);
+    return r;
+}
+
+static inline rtsBool readEof(ReplayBuf *rb)
+{
+    FILE *f;
+
+    if (rb != NULL) {
+        f = rb->f;
+    } else {
+        f = fileReplay;
+    }
+
+    return (feof(f) == 0);
+}
+
+static inline void getWord8(ReplayBuf *rb, StgWord8 *i)
+{
+    ASSERT(rb->eb.pos < rb->eb.marker);
+    *i = *rb->eb.pos;
+    rb->eb.pos++;
+}
+
+static inline void getWord16(ReplayBuf *rb, StgWord16 *i)
+{
+    getWord8(rb, (StgWord8 *)i);
+    *i = *i << 8;
+    getWord8(rb, (StgWord8 *)i);
+}
+
+static inline void getWord32(ReplayBuf *rb, StgWord32 *i)
+{
+    getWord16(rb, (StgWord16 *)i);
+    *i = *i << 16;
+    getWord16(rb, (StgWord16 *)i);
+}
+
+static inline void getWord64(ReplayBuf *rb, StgWord64 *i)
+{
+    getWord32(rb, (StgWord32 *)i);
+    *i = *i << 32;
+    getWord32(rb, (StgWord32 *)i);
+}
+
+static inline void getBuf(ReplayBuf *rb, StgWord8 *buf, nat size)
+{
+    ASSERT(rb->eb.pos <= rb->eb.marker - size);
+    memcpy(buf, rb->eb.pos, size);
+    rb->eb.pos += size;
+}
+
+static inline void getEventTypeNum(ReplayBuf *rb, EventTypeNum *etNum)
+{ getWord16(rb, etNum); }
+
+static inline void getTimestamp(ReplayBuf *rb, EventTimestamp *ts)
+{ getWord64(rb, ts); }
+
+static inline void getThreadID(ReplayBuf *rb, EventThreadID *id)
+{ getWord32(rb, id); }
+
+static inline void getThreadStatus(ReplayBuf *rb, EventThreadStatus *status)
+{ getWord16(rb, status); }
+
+static inline void getCapNo(ReplayBuf *rb, EventCapNo *no)
+{ getWord16(rb, no); }
+
+static inline void getPayloadSize(ReplayBuf *rb, EventPayloadSize *size)
+{ getWord16(rb, size); }
+
+static inline void getCapsetID(ReplayBuf *rb, EventCapsetID *id)
+{ getWord32(rb, id); }
+
+static inline void getCapsetType(ReplayBuf *rb, EventCapsetType *type)
+{ getWord16(rb, type); }
+
+static inline void getTaskId(ReplayBuf *rb, EventTaskId *id)
+{ getWord64(rb, id); }
+
+static inline void getKernelThreadId(ReplayBuf *rb, EventKernelThreadId *tid)
+{ getWord64(rb, tid); }
+
+static void initReplayBuf(ReplayBuf *rb, EventCapNo capno, FILE *f);
+static void resetReplayBuf(ReplayBuf *rb);
+static void fillReplayBuf(ReplayBuf *rb);
+
+static void readEventType(void);
+static Event *getEvent(ReplayBuf *rb);
+
+static Event *replayBufCurrent(ReplayBuf *rb);
+
+static OrderedEvent *eventListN(nat n);
+static OrderedEvent *eventListNew(CapEvent *ce);
+static OrderedEvent *eventListNext(void);
+static void eventListForward(void);
+
+
+static StgBool
+initEventType(StgWord8 t)
+{
+    eventTypes[t].etNum = t;
+    eventTypes[t].desc = EventDesc[t];
+
+    switch (t) {
+    case EVENT_CREATE_THREAD:   // (cap, thread)
+    case EVENT_RUN_THREAD:      // (cap, thread)
+    case EVENT_THREAD_RUNNABLE: // (cap, thread)
+    case EVENT_CREATE_SPARK_THREAD: // (cap, spark_thread)
+        eventTypes[t].size = sizeof(EventThreadID);
+        break;
+
+    case EVENT_MIGRATE_THREAD:  // (cap, thread, new_cap)
+    case EVENT_THREAD_WAKEUP:   // (cap, thread, other_cap)
+        eventTypes[t].size = sizeof(EventThreadID) + sizeof(EventCapNo);
+        break;
+
+    case EVENT_STOP_THREAD:     // (cap, thread, status)
+        eventTypes[t].size =
+            sizeof(EventThreadID) + sizeof(StgWord16) + sizeof(EventThreadID);
+        break;
+
+    case EVENT_STARTUP:         // (cap count)
+    case EVENT_CAP_CREATE:      // (cap)
+    case EVENT_CAP_DELETE:      // (cap)
+    case EVENT_CAP_ENABLE:      // (cap)
+    case EVENT_CAP_DISABLE:     // (cap)
+        eventTypes[t].size = sizeof(EventCapNo);
+        break;
+
+    case EVENT_CAPSET_CREATE:   // (capset, capset_type)
+        eventTypes[t].size =
+            sizeof(EventCapsetID) + sizeof(EventCapsetType);
+        break;
+
+    case EVENT_CAPSET_DELETE:   // (capset)
+        eventTypes[t].size = sizeof(EventCapsetID);
+        break;
+
+    case EVENT_CAPSET_ASSIGN_CAP:  // (capset, cap)
+    case EVENT_CAPSET_REMOVE_CAP:
+        eventTypes[t].size =
+            sizeof(EventCapsetID) + sizeof(EventCapNo);
+        break;
+
+    case EVENT_OSPROCESS_PID:   // (cap, pid)
+    case EVENT_OSPROCESS_PPID:
+        eventTypes[t].size =
+            sizeof(EventCapsetID) + sizeof(StgWord32);
+        break;
+
+    case EVENT_WALL_CLOCK_TIME: // (capset, unix_epoch_seconds, nanoseconds)
+        eventTypes[t].size =
+            sizeof(EventCapsetID) + sizeof(StgWord64) + sizeof(StgWord32);
+        break;
+
+    case EVENT_SPARK_STEAL:     // (cap, victim_cap)
+        eventTypes[t].size =
+            sizeof(EventCapNo);
+        break;
+
+    case EVENT_REQUEST_SEQ_GC:  // (cap)
+    case EVENT_REQUEST_PAR_GC:  // (cap)
+    case EVENT_GC_START:        // (cap)
+    case EVENT_GC_END:          // (cap)
+    case EVENT_GC_IDLE:
+    case EVENT_GC_WORK:
+    case EVENT_GC_DONE:
+    case EVENT_GC_GLOBAL_SYNC:  // (cap)
+    case EVENT_SPARK_CREATE:    // (cap)
+    case EVENT_SPARK_DUD:       // (cap)
+    case EVENT_SPARK_OVERFLOW:  // (cap)
+    case EVENT_SPARK_RUN:       // (cap)
+    case EVENT_SPARK_FIZZLE:    // (cap)
+    case EVENT_SPARK_GC:        // (cap)
+        eventTypes[t].size = 0;
+        break;
+
+    case EVENT_LOG_MSG:          // (msg)
+    case EVENT_USER_MSG:         // (msg)
+    case EVENT_USER_MARKER:      // (markername)
+    case EVENT_RTS_IDENTIFIER:   // (capset, str)
+    case EVENT_PROGRAM_ARGS:     // (capset, strvec)
+    case EVENT_PROGRAM_ENV:      // (capset, strvec)
+    case EVENT_THREAD_LABEL:     // (thread, str)
+        eventTypes[t].size = 0xffff;
+        break;
+
+    case EVENT_SPARK_COUNTERS:   // (cap, 7*counter)
+        eventTypes[t].size = 7 * sizeof(StgWord64);
+        break;
+
+    case EVENT_HEAP_ALLOCATED:    // (heap_capset, alloc_bytes)
+    case EVENT_HEAP_SIZE:         // (heap_capset, size_bytes)
+    case EVENT_HEAP_LIVE:         // (heap_capset, live_bytes)
+        eventTypes[t].size = sizeof(EventCapsetID) + sizeof(StgWord64);
+        break;
+
+    case EVENT_HEAP_INFO_GHC:     // (heap_capset, n_generations,
+                                  //  max_heap_size, alloc_area_size,
+                                  //  mblock_size, block_size)
+        eventTypes[t].size = sizeof(EventCapsetID)
+                           + sizeof(StgWord16)
+                           + sizeof(StgWord64) * 4;
+        break;
+
+    case EVENT_GC_STATS_GHC:      // (heap_capset, generation,
+                                  //  copied_bytes, slop_bytes, frag_bytes,
+                                  //  par_n_threads,
+                                  //  par_max_copied, par_tot_copied)
+        eventTypes[t].size = sizeof(EventCapsetID)
+                           + sizeof(StgWord16)
+                           + sizeof(StgWord64) * 3
+                           + sizeof(StgWord32)
+                           + sizeof(StgWord64) * 2;
+        break;
+
+    case EVENT_TASK_CREATE:   // (taskId, cap, tid)
+        eventTypes[t].size =
+            sizeof(EventTaskId) + sizeof(EventCapNo) + sizeof(EventKernelThreadId);
+        break;
+
+    case EVENT_TASK_MIGRATE:   // (taskId, cap, new_cap)
+        eventTypes[t].size =
+            sizeof(EventTaskId) + sizeof(EventCapNo) * 2;
+        break;
+
+    case EVENT_TASK_DELETE:   // (taskId)
+        eventTypes[t].size = sizeof(EventTaskId);
+        break;
+
+    case EVENT_BLOCK_MARKER:
+        eventTypes[t].size = sizeof(StgWord32) + sizeof(EventTimestamp) +
+            sizeof(EventCapNo);
+        break;
+
+    case EVENT_HACK_BUG_T9003:
+        eventTypes[t].size = 0;
+        break;
+
+    case EVENT_CAP_ALLOC:
+        eventTypes[t].size = sizeof(StgWord64) * 3;
+        break;
+
+    default:
+        return 0; /* ignore deprecated events */
+    }
+
+    return 1;
+}
+
+#define BUF 512
 
 void
 initEventLogging(void)
@@ -256,17 +613,17 @@ initEventLogging(void)
     /* Open event log file for writing. */
     if ((event_log_file = fopen(event_log_filename, "wb")) == NULL) {
         sysErrorBelch("initEventLogging: can't open %s", event_log_filename);
-        stg_exit(EXIT_FAILURE);    
+        stg_exit(EXIT_FAILURE);
     }
 
-    /* 
+    /*
      * Allocate buffer(s) to store events.
      * Create buffer large enough for the header begin marker, all event
      * types, and header end marker to prevent checking if buffer has room
      * for each of these steps, and remove the need to flush the buffer to
      * disk during initialization.
      *
-     * Use a single buffer to store the header with event types, then flush 
+     * Use a single buffer to store the header with event types, then flush
      * the buffer so all buffers are empty for writing events.
      */
 #ifdef THREADED_RTS
@@ -285,154 +642,8 @@ initEventLogging(void)
     // Mark beginning of event types in the header.
     postInt32(&eventBuf, EVENT_HET_BEGIN);
     for (t = 0; t < NUM_GHC_EVENT_TAGS; ++t) {
-
-        eventTypes[t].etNum = t;
-        eventTypes[t].desc = EventDesc[t];
-
-        switch (t) {
-        case EVENT_CREATE_THREAD:   // (cap, thread)
-        case EVENT_RUN_THREAD:      // (cap, thread)
-        case EVENT_THREAD_RUNNABLE: // (cap, thread)
-        case EVENT_CREATE_SPARK_THREAD: // (cap, spark_thread)
-            eventTypes[t].size = sizeof(EventThreadID);
-            break;
-
-        case EVENT_MIGRATE_THREAD:  // (cap, thread, new_cap)
-        case EVENT_THREAD_WAKEUP:   // (cap, thread, other_cap)
-            eventTypes[t].size =
-                sizeof(EventThreadID) + sizeof(EventCapNo);
-            break;
-
-        case EVENT_STOP_THREAD:     // (cap, thread, status)
-            eventTypes[t].size =
-                sizeof(EventThreadID) + sizeof(StgWord16) + sizeof(EventThreadID);
-            break;
-
-        case EVENT_STARTUP:         // (cap_count)
-        case EVENT_CAP_CREATE:      // (cap)
-        case EVENT_CAP_DELETE:      // (cap)
-        case EVENT_CAP_ENABLE:      // (cap)
-        case EVENT_CAP_DISABLE:     // (cap)
-            eventTypes[t].size = sizeof(EventCapNo);
-            break;
-
-        case EVENT_CAPSET_CREATE:   // (capset, capset_type)
-            eventTypes[t].size =
-                sizeof(EventCapsetID) + sizeof(EventCapsetType);
-            break;
-
-        case EVENT_CAPSET_DELETE:   // (capset)
-            eventTypes[t].size = sizeof(EventCapsetID);
-            break;
-
-        case EVENT_CAPSET_ASSIGN_CAP:  // (capset, cap)
-        case EVENT_CAPSET_REMOVE_CAP:
-            eventTypes[t].size =
-                sizeof(EventCapsetID) + sizeof(EventCapNo);
-            break;
-
-        case EVENT_OSPROCESS_PID:   // (cap, pid)
-        case EVENT_OSPROCESS_PPID:
-            eventTypes[t].size =
-                sizeof(EventCapsetID) + sizeof(StgWord32);
-            break;
-
-        case EVENT_WALL_CLOCK_TIME: // (capset, unix_epoch_seconds, nanoseconds)
-            eventTypes[t].size =
-                sizeof(EventCapsetID) + sizeof(StgWord64) + sizeof(StgWord32);
-            break;
-
-        case EVENT_SPARK_STEAL:     // (cap, victim_cap)
-            eventTypes[t].size =
-                sizeof(EventCapNo);
-            break;
-
-        case EVENT_REQUEST_SEQ_GC:  // (cap)
-        case EVENT_REQUEST_PAR_GC:  // (cap)
-        case EVENT_GC_START:        // (cap)
-        case EVENT_GC_END:          // (cap)
-        case EVENT_GC_IDLE:
-        case EVENT_GC_WORK:
-        case EVENT_GC_DONE:
-        case EVENT_GC_GLOBAL_SYNC:  // (cap)
-        case EVENT_SPARK_CREATE:    // (cap)
-        case EVENT_SPARK_DUD:       // (cap)
-        case EVENT_SPARK_OVERFLOW:  // (cap)
-        case EVENT_SPARK_RUN:       // (cap)
-        case EVENT_SPARK_FIZZLE:    // (cap)
-        case EVENT_SPARK_GC:        // (cap)
-            eventTypes[t].size = 0;
-            break;
-
-        case EVENT_LOG_MSG:          // (msg)
-        case EVENT_USER_MSG:         // (msg)
-        case EVENT_USER_MARKER:      // (markername)
-        case EVENT_RTS_IDENTIFIER:   // (capset, str)
-        case EVENT_PROGRAM_ARGS:     // (capset, strvec)
-        case EVENT_PROGRAM_ENV:      // (capset, strvec)
-        case EVENT_THREAD_LABEL:     // (thread, str)
-            eventTypes[t].size = 0xffff;
-            break;
-
-        case EVENT_SPARK_COUNTERS:   // (cap, 7*counter)
-            eventTypes[t].size = 7 * sizeof(StgWord64);
-            break;
-
-        case EVENT_HEAP_ALLOCATED:    // (heap_capset, alloc_bytes)
-        case EVENT_HEAP_SIZE:         // (heap_capset, size_bytes)
-        case EVENT_HEAP_LIVE:         // (heap_capset, live_bytes)
-            eventTypes[t].size = sizeof(EventCapsetID) + sizeof(StgWord64);
-            break;
-
-        case EVENT_HEAP_INFO_GHC:     // (heap_capset, n_generations,
-                                      //  max_heap_size, alloc_area_size,
-                                      //  mblock_size, block_size)
-            eventTypes[t].size = sizeof(EventCapsetID)
-                               + sizeof(StgWord16)
-                               + sizeof(StgWord64) * 4;
-            break;
-
-        case EVENT_GC_STATS_GHC:      // (heap_capset, generation,
-                                      //  copied_bytes, slop_bytes, frag_bytes,
-                                      //  par_n_threads,
-                                      //  par_max_copied, par_tot_copied)
-            eventTypes[t].size = sizeof(EventCapsetID)
-                               + sizeof(StgWord16)
-                               + sizeof(StgWord64) * 3
-                               + sizeof(StgWord32)
-                               + sizeof(StgWord64) * 2;
-            break;
-
-        case EVENT_TASK_CREATE:   // (taskId, cap, tid)
-            eventTypes[t].size =
-                sizeof(EventTaskId) + sizeof(EventCapNo) + sizeof(EventKernelThreadId);
-            break;
-
-        case EVENT_TASK_MIGRATE:   // (taskId, cap, new_cap)
-            eventTypes[t].size =
-                sizeof(EventTaskId) + sizeof(EventCapNo) + sizeof(EventCapNo);
-            break;
-
-        case EVENT_TASK_DELETE:   // (taskId)
-            eventTypes[t].size = sizeof(EventTaskId);
-            break;
-
-        case EVENT_BLOCK_MARKER:
-            eventTypes[t].size = sizeof(StgWord32) + sizeof(EventTimestamp) + 
-                sizeof(EventCapNo);
-            break;
-
-        case EVENT_HACK_BUG_T9003:
-            eventTypes[t].size = 0;
-            break;
-
-        case EVENT_CAP_ALLOC:
-            eventTypes[t].size = sizeof(StgWord64) * 3;
-            break;
-
-        default:
-            continue; /* ignore deprecated events */
-        }
+        if (initEventType(t) == 0)
+            continue;;
 
         // Write in buffer: the start event type.
         postEventType(&eventBuf, &eventTypes[t]);
@@ -511,6 +722,9 @@ freeEventLogging(void)
     StgWord8 c;
     
     // Free events buffer.
+    if (eventBuf.begin != NULL) {
+        stgFree(eventBuf.begin);
+    }
     for (c = 0; c < n_capabilities; ++c) {
         if (capEventBuf[c].begin != NULL) 
             stgFree(capEventBuf[c].begin);
@@ -1036,14 +1250,13 @@ postEventAtTimestamp (Capability *cap, EventTimestamp ts, EventTypeNum tag)
     postWord64(eb, ts);
 }
 
-#define BUF 512
-
 void postLogMsg(EventsBuf *eb, EventTypeNum type, char *msg, va_list ap)
 {
     char buf[BUF];
     nat size;
 
     size = vsnprintf(buf,BUF,msg,ap);
+    // FIXME-H: possible bug, size >= BUF?, should not overwrite BUF-1 anyway
     if (size > BUF) {
         buf[BUF-1] = '\0';
         size = BUF;
@@ -1273,6 +1486,687 @@ void postEventType(EventsBuf *eb, EventType *et)
     }
     postWord32(eb, 0); // no extensions yet
     postInt32(eb, EVENT_ET_END);
+}
+
+void
+initEventLoggingReplay(void)
+{
+    StgInt32 i32;
+    nat n_caps, end;
+
+    eventLogFilenameReplay = stgMallocBytes(strlen(prog_name)
+                                            + 8  /* .replay */,
+                                            "initEventLoggingReplay");
+
+    // TODO: make defines to struct and use ELEMENTSOF() macro
+    if (sizeof(EventDesc) / sizeof(char*) != NUM_GHC_EVENT_TAGS) {
+        barf("EventDesc array has the wrong number of elements");
+    }
+
+    // TODO: what for forked processes
+    sprintf(eventLogFilenameReplay, "%s.replay", prog_name);
+
+    /* Open event log file for reading. */
+    if ((fileReplay = fopen(eventLogFilenameReplay, "rb")) == NULL) {
+        sysErrorBelch("initEventLoggingReplay: can't open %s", eventLogFilenameReplay);
+        stg_exit(EXIT_FAILURE);
+    }
+
+    // getHeader
+
+    readInt32(NULL, &i32);
+    if (i32 != EVENT_HEADER_BEGIN)
+        barf("Header begin marker not found");
+
+    readInt32(NULL, &i32);
+    if (i32 != EVENT_HET_BEGIN)
+        barf("Header Event Type begin marker not found");;
+
+    // read event types
+    end = 1;
+    while (end) {
+        readInt32(NULL, &i32);
+        switch (i32) {
+        case EVENT_ET_BEGIN:
+            readEventType();
+            break;
+        case EVENT_HET_END:
+            end = 0;
+            break;
+        default:
+            barf("Malformed list of Event Types in header");
+        }
+    }
+
+    readInt32(NULL, &i32);
+    if (i32 != EVENT_HEADER_END)
+        barf("Header end marker not found");
+
+    readInt32(NULL, &i32);
+    if (i32 != EVENT_DATA_BEGIN)
+        barf("Data begin marker not found");
+
+#ifdef THREADED_RTS
+    // XXX n_capabilities hasn't been initislised yet
+    n_caps = RtsFlags.ParFlags.nNodes;
+#else
+    n_caps = 1;
+#endif
+    moreCapEventBufsReplay(0, n_caps);
+
+    initReplayBuf(&replayBuf, -1, fileReplay);
+}
+
+void
+endEventLoggingReplay(void)
+{
+    nat c;
+
+    if (fileReplay != NULL) {
+        fclose(fileReplay);
+    }
+
+    for (c = 0; c < n_capabilities; c++) {
+        if (capReplayBuf[c].f != NULL) {
+            fclose(capReplayBuf[c].f);
+        }
+    }
+
+    if (replayBuf.eb.begin != NULL) {
+        stgFree(replayBuf.eb.begin);
+    }
+
+    for (c = 0; c < n_capabilities; ++c) {
+        if (capReplayBuf[c].eb.begin != NULL)
+            stgFree(capReplayBuf[c].eb.begin);
+    }
+
+    if (capReplayBuf != NULL)  {
+        stgFree(capReplayBuf);
+    }
+
+    if (eventLogFilenameReplay != NULL) {
+        stgFree(eventLogFilenameReplay);
+    }
+}
+
+void
+moreCapEventBufsReplay(nat from, nat to)
+{
+    nat c;
+    FILE *f;
+
+    if (from > 0) {
+        capReplayBuf = stgReallocBytes(capReplayBuf,
+                                       to * sizeof(ReplayBuf),
+                                       "moreCapReplayBuf");
+    } else {
+        capReplayBuf = stgMallocBytes(to * sizeof(ReplayBuf),
+                                      "moreCapReplayBuf");
+    }
+
+    for (c = from; c < to; ++c) {
+        // Duplicate fd after reading event log header
+        if ((f = fopen(eventLogFilenameReplay, "rb")) == NULL) {
+            sysErrorBelch("moreCapReplayBuf: can't open %s", eventLogFilenameReplay);
+            stg_exit(EXIT_FAILURE);
+        }
+        fseek(f, ftell(fileReplay), SEEK_SET);
+        initReplayBuf(&capReplayBuf[c], c, f);
+    }
+}
+
+static void
+initReplayBuf(ReplayBuf *rb, EventCapNo capno, FILE *f)
+{
+    initEventsBuf(&rb->eb, EVENT_LOG_SIZE, capno);
+    rb->eb.pos = rb->eb.marker = rb->eb.begin;
+    rb->f = f;
+    rb->ev = NULL;
+}
+
+static void
+resetReplayBuf(ReplayBuf *rb)
+{
+    rb->eb.pos = rb->eb.marker = rb->eb.begin;
+    rb->ev = NULL;
+}
+
+static void
+fillReplayBuf(ReplayBuf *rb)
+{
+    nat size, skip;
+    StgWord32 block_size;
+    EventsBuf *eb;
+    EventTypeNum tag;
+    EventCapNo capno;
+
+    ASSERT(rb->f != NULL);
+
+    resetReplayBuf(rb);
+
+    eb = &rb->eb;
+    while (1) {
+        // Header
+        readEventTypeNum(rb, &tag);
+        if (tag == EVENT_DATA_END) {
+            if (!readEof(rb)) {
+                // TODO-H: debug only
+                barf("Should have found EOF while reading '%s'", eventLogFilenameReplay);
+            }
+            fclose(rb->f);
+            rb->f = NULL;
+            if (eb->capno == (EventCapNo)-1) {
+                fileReplay = NULL;
+            }
+            return;
+        }
+
+        // Event block
+        ASSERTM(tag == EVENT_BLOCK_MARKER,
+                "Block marker not found. Got tag %d (%s)", tag, EventDesc[tag]);
+        skipSize(rb, sizeof(EventTimestamp));
+        readWord32(rb, &block_size);
+        skipSize(rb, sizeof(EventTimestamp));
+        readCapNo(rb, &capno);
+        skip = sizeof(EventTypeNum) + sizeof(EventTimestamp) +
+               sizeof(StgWord32) + sizeof(EventTimestamp) +
+               sizeof(EventCapNo);
+        size = block_size - skip;
+        if (capno == eb->capno) {
+            ASSERT(size <= eb->size);
+            readBuf(rb, (StgWord8 *)eb->begin, size);
+            eb->marker = eb->begin + size;
+            break;
+        } else {
+            // skip other capabilities blocks
+            skipSize(rb, size);
+        }
+    }
+}
+
+static void
+readEventType(void)
+{
+    nat d;
+    EventTypeNum etNum;
+    StgWord16 size;
+    StgWord32 desclen, extralen;
+    StgInt32 i32;
+
+    readEventTypeNum(NULL, &etNum);
+    readWord16(NULL, (StgWord16 *)&size);
+    readWord32(NULL, &desclen);
+
+    for (d = 0; d < desclen; ++d) {
+        // TODO: skipSize(NULL, desclen);
+        StgInt8 i;
+        readInt8(NULL, &i);
+    }
+
+    readWord32(NULL, &extralen); // extension point (should be 0)
+    ASSERT(extralen == 0);
+    for (d = 0; d < extralen; d++) {
+        // TODO: skipSize(NULL, extralen);
+        StgWord8 w;
+        readWord8(NULL, &w);
+    }
+
+    readInt32(NULL, &i32);
+    if (i32 != EVENT_ET_END)
+        barf("Event Type end marker not found");
+
+    eventTypes[etNum].etNum = etNum;
+    eventTypes[etNum].size = size;
+    eventTypes[etNum].desc = EventDesc[etNum];
+}
+
+// Gets a new event from the buffer
+static Event *
+getEvent(ReplayBuf *rb)
+{
+    Event *ev;
+    EventTypeNum tag;
+    EventTimestamp ts;
+
+    if (rb->f == NULL) {
+        return NULL;
+    }
+
+    ASSERT(rb->eb.pos <= rb->eb.marker);
+    if (rb->eb.pos >= rb->eb.marker) {
+        fillReplayBuf(rb);
+        return getEvent(rb);
+    }
+
+    getEventTypeNum(rb, &tag);
+    getTimestamp(rb, &ts);
+
+    switch (tag) {
+    case EVENT_CREATE_THREAD:
+    case EVENT_RUN_THREAD:
+    case EVENT_THREAD_RUNNABLE:
+    case EVENT_CREATE_SPARK_THREAD:
+    {
+        // FIXME-H: malloc
+        EventThread *et = stgCallocBytes(1, sizeof(EventThread), "getEvent");
+        getThreadID(rb, &et->thread);
+
+        ev = (Event *)et;
+        break;
+    }
+    case EVENT_STOP_THREAD:
+    {
+        EventStopThread *est = stgCallocBytes(1, sizeof(EventStopThread), "getEvent");
+        getThreadID(rb, &est->thread);
+        getThreadStatus(rb, &est->status);
+        getThreadID(rb, &est->blocked_on);
+
+        ev = (Event *)est;
+        break;
+    }
+    case EVENT_MIGRATE_THREAD:
+    case EVENT_THREAD_WAKEUP:
+    {
+        EventThreadCap *etc = stgCallocBytes(1, sizeof(EventThreadCap), "getEvent");
+        getThreadID(rb, &etc->thread);
+        getCapNo(rb, &etc->capno);
+
+        ev = (Event *)etc;
+        break;
+    }
+    case EVENT_GC_START:
+    case EVENT_GC_END:
+    case EVENT_REQUEST_SEQ_GC:
+    case EVENT_REQUEST_PAR_GC:
+    case EVENT_GC_IDLE:
+    case EVENT_GC_WORK:
+    case EVENT_GC_DONE:
+    case EVENT_SPARK_CREATE:
+    case EVENT_SPARK_DUD:
+    case EVENT_SPARK_OVERFLOW:
+    case EVENT_SPARK_RUN:
+    case EVENT_SPARK_FIZZLE:
+    case EVENT_SPARK_GC:
+    case EVENT_GC_GLOBAL_SYNC:
+        /* Empty events */
+        ev = stgCallocBytes(1, sizeof(EventHeader), "getEvent");
+        break;
+    case EVENT_LOG_MSG:
+    case EVENT_USER_MSG:
+    case EVENT_USER_MARKER:
+    {
+        EventPayloadSize size;
+
+        getPayloadSize(rb, &size);
+
+        EventMsg *em = stgCallocBytes(1, sizeof(EventMsg) + size, "getEvent");
+        em->size = size;
+        getBuf(rb, (StgWord8 *)em->msg, size);
+
+        ev = (Event *)em;
+        break;
+    }
+    case EVENT_STARTUP:
+    case EVENT_SPARK_STEAL:
+    case EVENT_CAP_CREATE:
+    case EVENT_CAP_DELETE:
+    case EVENT_CAP_DISABLE:
+    case EVENT_CAP_ENABLE:
+    {
+        struct _EventCapNo *ecn = stgCallocBytes(1, sizeof(struct _EventCapNo), "getEvent");
+        getCapNo(rb, &ecn->capno);
+
+        ev = (Event *)ecn;
+        break;
+    }
+    case EVENT_BLOCK_MARKER:
+    {
+        barf("getEvent: EVENT_BLOCK_MARKER inside a block event");
+        break;
+    }
+    case EVENT_CAPSET_CREATE:
+    {
+        EventCapsetCreate *ecc = stgCallocBytes(1, sizeof(EventCapsetCreate), "getEvent");
+        getCapsetID(rb, &ecc->capset);
+        getCapsetType(rb, &ecc->type);
+
+        ev = (Event *)ecc;
+        break;
+    }
+    case EVENT_CAPSET_DELETE:
+    {
+        EventCapsetDelete *ecd = stgCallocBytes(1, sizeof(EventCapsetDelete), "getEvent");
+        getCapsetID(rb, &ecd->capset);
+
+        ev = (Event *)ecd;
+        break;
+    }
+    case EVENT_CAPSET_ASSIGN_CAP:
+    case EVENT_CAPSET_REMOVE_CAP:
+    {
+        EventCapsetCapNo *eccn = stgCallocBytes(1, sizeof(EventCapsetCapNo), "getEvent");
+        getCapsetID(rb, &eccn->capset);
+        getCapNo(rb, &eccn->capno);
+
+        ev = (Event *)eccn;
+        break;
+    }
+    case EVENT_RTS_IDENTIFIER:
+    case EVENT_PROGRAM_ARGS:
+    case EVENT_PROGRAM_ENV:
+    {
+        EventPayloadSize size;
+
+        getPayloadSize(rb, &size);
+
+        EventCapsetMsg *ecm = stgCallocBytes(1, sizeof(EventMsg) + size, "getEvent");
+        ecm->size = size;
+        getCapsetID(rb, &ecm->capset);
+        getBuf(rb, (StgWord8 *)ecm->msg, size - sizeof(EventCapsetID));
+
+        ev = (Event *)ecm;
+        break;
+    }
+    case EVENT_OSPROCESS_PID:
+    case EVENT_OSPROCESS_PPID:
+    {
+        EventCapsetPid *ecp = stgCallocBytes(1, sizeof(EventCapsetPid), "getEvent");
+        getCapsetID(rb, &ecp->capset);
+        getWord32(rb, &ecp->pid);
+
+        ev = (Event *)ecp;
+        break;
+    }
+    case EVENT_SPARK_COUNTERS:
+    {
+        EventSparkCounters *esc = stgCallocBytes(1, sizeof(EventSparkCounters), "getEvent");
+        getWord64(rb, &esc->created);
+        getWord64(rb, &esc->dud);
+        getWord64(rb, &esc->overflowed);
+        getWord64(rb, &esc->converted);
+        getWord64(rb, &esc->gcd);
+        getWord64(rb, &esc->fizzled);
+        getWord64(rb, &esc->remaining);
+
+        ev = (Event *)esc;
+        break;
+    }
+    case EVENT_WALL_CLOCK_TIME:
+    {
+        EventWallClockTime *ewct = stgCallocBytes(1, sizeof(EventWallClockTime), "getEvent");
+        getCapsetID(rb, &ewct->capset);
+        getWord64(rb, &ewct->sec);
+        getWord32(rb, &ewct->nsec);
+
+        ev = (Event *)ewct;
+        break;
+    }
+    case EVENT_THREAD_LABEL:
+    {
+        EventPayloadSize size;
+
+        getPayloadSize(rb, &size);
+
+        EventThreadLabel *etl = stgCallocBytes(1, sizeof(EventMsg) + size, "getEvent");
+        etl->size = size;
+        getThreadID(rb, &etl->thread);
+        getBuf(rb, (StgWord8 *)etl->label, size - sizeof(EventThreadID));
+
+        ev = (Event *)etl;
+        break;
+    }
+    case EVENT_HEAP_ALLOCATED:
+    case EVENT_HEAP_SIZE:
+    case EVENT_HEAP_LIVE:
+    {
+        EventCapsetBytes *ecb = stgCallocBytes(1, sizeof(EventCapsetBytes), "getEvent");
+        getCapsetID(rb, &ecb->capset);
+        getWord64(rb, &ecb->bytes);
+
+        ev = (Event *)ecb;
+        break;
+    }
+    case EVENT_HEAP_INFO_GHC:
+    {
+        EventHeapInfoGHC *ehig = stgCallocBytes(1, sizeof(EventHeapInfoGHC), "getEvent");
+        getCapsetID(rb, &ehig->capset);
+        getWord16(rb, &ehig->gens);
+        getWord64(rb, &ehig->maxHeapSize);
+        getWord64(rb, &ehig->allocAreaSize);
+        getWord64(rb, &ehig->mblockSize);
+        getWord64(rb, &ehig->blockSize);
+
+        ev = (Event *)ehig;
+        break;
+    }
+    case EVENT_GC_STATS_GHC:
+    {
+        EventGcStatsGHC *egsg = stgCallocBytes(1, sizeof(EventGcStatsGHC), "getEvent");
+        getCapsetID(rb, &egsg->capset);
+        getWord16(rb, &egsg->gen);
+        getWord64(rb, &egsg->copied);
+        getWord64(rb, &egsg->slop);
+        getWord64(rb, &egsg->fragmentation);
+        getWord32(rb, &egsg->par_n_threads);
+        getWord64(rb, &egsg->par_max_copied);
+        getWord64(rb, &egsg->par_tot_copied);
+
+        ev = (Event *)egsg;
+        break;
+    }
+    case EVENT_TASK_CREATE:
+    {
+        EventTaskCreate *etc = stgCallocBytes(1, sizeof(EventTaskCreate), "getEvent");
+        getTaskId(rb, &etc->task);
+        getCapNo(rb, &etc->capno);
+        getKernelThreadId(rb, &etc->tid);
+
+        ev = (Event *)etc;
+        break;
+    }
+    case EVENT_TASK_MIGRATE:
+    {
+        EventTaskMigrate *etm = stgCallocBytes(1, sizeof(EventTaskMigrate), "getEvent");
+        getTaskId(rb, &etm->task);
+        getCapNo(rb, &etm->capno);
+        getCapNo(rb, &etm->new_capno);
+
+        ev = (Event *)etm;
+        break;
+    }
+    case EVENT_TASK_DELETE:
+    {
+        EventTaskDelete *etd = stgCallocBytes(1, sizeof(EventTaskDelete), "getEvent");
+        getTaskId(rb, &etd->task);
+
+        ev = (Event *)etd;
+        break;
+    }
+    case EVENT_CAP_ALLOC:
+    {
+        EventCapAlloc *eca = stgCallocBytes(1, sizeof(EventCapAlloc), "getEvent");
+        getWord64(rb, &eca->alloc);
+        getWord64(rb, &eca->blocks);
+        getWord64(rb, &eca->hp_alloc);
+
+        ev = (Event *)eca;
+        break;
+    }
+    default:
+        barf ("getEvent: unknown event tag %d", tag);
+    }
+
+    ev->header.tag = tag;
+    ev->header.time = ts;
+    return ev;
+}
+
+// Returns the current event in the buffer,
+// forces a read if not available.
+static Event *
+replayBufCurrent(ReplayBuf *rb)
+{
+    if (rb->ev != NULL) {
+        return rb->ev;
+    } else {
+        rb->ev = getEvent(rb);
+        return rb->ev;
+    }
+}
+
+// Returns the nth event in eventList.
+static OrderedEvent *
+eventListN(nat n)
+{
+    ASSERT(eventList);
+    ASSERT(n < eventListSize);
+
+    OrderedEvent *oe = eventList;
+    nat i = 0;
+    for (i = 0; i < n; i++) {
+        ASSERT(oe->next);
+        oe = oe->next;
+    }
+
+    return oe;
+}
+
+// Caches a new event in eventList.
+static OrderedEvent *
+eventListNew(CapEvent *ce)
+{
+    OrderedEvent *oe, *new;
+#ifdef DEBUG
+    nat n = 0;
+#endif
+
+    new = stgMallocBytes(sizeof(OrderedEvent), "eventListNew");
+    new->ce = ce;
+    new->next = NULL;
+    if (eventList == NULL) {
+        ASSERT(eventListSize == 0);
+        eventList = new;
+    } else {
+        oe = eventList;
+        while (oe->next) {
+            oe = oe->next;
+#ifdef DEBUG
+            n++;
+#endif
+        }
+        ASSERT(n == eventListSize-1);
+        oe->next = new;
+    }
+    eventListSize++;
+
+    return new;
+}
+
+// Stores a new event in eventList.
+static OrderedEvent *
+eventListNext(void)
+{
+    ReplayBuf *rb;
+    CapEvent *ce;
+    Event *ev;
+    nat c, n_caps;
+
+#ifdef THREADED_RTS
+    n_caps = RtsFlags.ParFlags.nNodes;
+#else
+    n_caps = 1;
+#endif
+
+    // check which event happened earlier
+    rb = &replayBuf;
+    replayBufCurrent(rb);
+    for (c = 0; c < n_caps; c++) {
+        ev = replayBufCurrent(&capReplayBuf[c]);
+        if (rb->ev == NULL ||
+            (ev != NULL && ev->header.time < rb->ev->header.time)) {
+            rb = &capReplayBuf[c];
+        }
+    }
+    c = rb->eb.capno;
+    ev = replayBufCurrent(rb);
+
+    // we may have read all events
+    if (ev == NULL) {
+        ASSERT(replayBuf.f == NULL);
+        for (c = 0; c < n_caps; c++) {
+            ASSERT(capReplayBuf[c].f == NULL);
+        }
+        return NULL;
+    }
+
+    ce = stgMallocBytes(sizeof(CapEvent), "eventListNext");
+    ce->capno = c;
+    ce->ev = ev;
+
+    // clear the replay buffer so next time we read a new event and
+    // cache the current event
+    rb->ev = NULL;
+    return eventListNew(ce);
+}
+
+// Discards the first cached event in eventList.
+static void
+eventListForward(void)
+{
+    ASSERT(eventList);
+
+    OrderedEvent *oe = eventList;
+    eventList = eventList->next;
+    eventListSize--;
+    stgFree(oe);
+}
+
+// Returns the nth event (comparing timestamps from all capabilities), reading
+// new events if needed, and saving them in the eventList buffer
+CapEvent *
+peekEvent(nat n)
+{
+    OrderedEvent *oe;
+
+    if (n < eventListSize) {
+        oe = eventListN(n);
+    } else {
+        while (n >= eventListSize) {
+            oe = eventListNext();
+            if (oe == NULL) {
+                return NULL;
+            }
+        }
+    }
+
+    return oe->ce;
+}
+
+// Returns the current event.
+CapEvent *
+readEvent(void)
+{
+    return peekEvent(0);
+}
+
+// Read a new event from the event log (clears the last cached event and
+// forces its buffer to read a new one before checking the new current one).
+CapEvent *
+nextEvent(void)
+{
+    if (eventListSize > 0) {
+        eventListForward();
+    }
+
+    return readEvent();
+}
+
+void
+freeEvent(CapEvent *ce)
+{
+    stgFree(ce->ev);
+    stgFree(ce);
 }
 
 #endif /* TRACING */

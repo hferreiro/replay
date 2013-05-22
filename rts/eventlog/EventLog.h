@@ -11,6 +11,8 @@
 
 #include "rts/EventLogFormat.h"
 #include "Capability.h"
+#include "Event.h"
+#include "Stats.h"
 
 #include "BeginPrivate.h"
 
@@ -27,6 +29,15 @@ void freeEventLogging(void);
 void abortEventLogging(void); // #4512 - after fork child needs to abort
 void flushEventLog(void);     // event log inherited from parent
 void moreCapEventBufs (nat from, nat to);
+
+void initEventLoggingReplay(void);
+void endEventLoggingReplay(void);
+void moreCapEventBufsReplay(nat from, nat to);
+
+CapEvent *peekEvent(nat n);
+CapEvent *readEvent(void);
+CapEvent *nextEvent(void);
+void freeEvent(CapEvent *ce);
 
 /*
  * Post a scheduler event to the capability's event buffer (an event
