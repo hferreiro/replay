@@ -1778,6 +1778,8 @@ forkProcess(HsStablePtr *entry
     nat sync;
 #endif
 
+    replayError("TODO: forkProcess");
+
     debugTrace(DEBUG_sched, "forking!");
     
     task = newBoundTask();
@@ -1968,6 +1970,7 @@ forkProcess(HsStablePtr *entry
 void
 setNumCapabilities (nat new_n_capabilities USED_IF_THREADS)
 {
+    replayError("TODO: setNumCapabilities\n");
 #if !defined(THREADED_RTS)
     if (new_n_capabilities != 1) {
         errorBelch("setNumCapabilities: not supported in the non-threaded RTS");
