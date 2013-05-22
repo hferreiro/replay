@@ -46,6 +46,19 @@ replayPrint(char *s USED_IF_DEBUG, ...)
 #endif
 }
 
+void GNU_ATTRIBUTE(__noreturn__)
+replayError(char *s, ...)
+{
+#define MSG_SIZE 64
+    char msg[MSG_SIZE];
+    va_list ap;
+
+    va_start(ap,s);
+    vsnprintf(msg, MSG_SIZE, s, ap);
+    va_end(ap);
+    barf("replay: %s", msg);
+}
+
 #if defined(DEBUG)
 static rtsBool
 nurseryReaches(bdescr *oldBd, bdescr *bd, StgPtr hp)
@@ -157,6 +170,7 @@ replaySaveAlloc(Capability *cap, StgThreadReturnCode ret)
 }
 #else
 void replayPrint(char *s STG_UNUSED, ...) {}
+void replayError(char *s STG_UNUSED, ...) {}
 void replaySaveHp(Capability *cap STG_UNUSED) {}
 void replaySaveAlloc(Capability *cap STG_UNUSED, StgThreadReturnCode ret STG_UNUSED) {}
 #endif

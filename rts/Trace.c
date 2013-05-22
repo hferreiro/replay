@@ -153,6 +153,11 @@ void tracingAddCapapilities (nat from, nat to)
     if (eventlog_enabled) {
         moreCapEventBufs(from,to);
     }
+
+    if (replay_enabled) {
+        replayError("TODO: tracingAddCapabilities\n");
+        //moreCapEventBufsReplay(from, to);
+    }
 }
 
 /* ---------------------------------------------------------------------------

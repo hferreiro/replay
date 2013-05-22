@@ -26,6 +26,7 @@ extern rtsBool replay_enabled;
 #endif // REPLAY
 
 void replayPrint(char *s, ...);
+void replayError(char *s, ...);
 #if defined(DEBUG)
 void replayCheckGCGeneric(StgPtr Hp, Capability *cap, StgPtr HpLim, bdescr *CurrentNursery);
 #endif
