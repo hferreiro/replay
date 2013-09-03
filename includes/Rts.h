@@ -284,6 +284,9 @@ int rts_isProfiled(void);
 // Returns non-zero if the RTS is a dynamically-linked version
 int rts_isDynamic(void);
 
+// Returns true if the RTS is a replay-enabled version
+HsBool rtsReplayEnabled(void);
+
 /* -----------------------------------------------------------------------------
    RTS Exit codes
    -------------------------------------------------------------------------- */

@@ -11,11 +11,16 @@
 
 #include "BeginPrivate.h"
 
-#ifdef REPLAY
+#include "Event.h"
 
 typedef struct _ReplayData {
-    StgPtr last_hp;
-    bdescr *last_bd;
+    StgPtr  hp;         // Hp value when yielding
+
+    bdescr *bd;         // To store the block where the thread is forced to stop
+
+    StgPtr  last_hp;    // To store the block and heap pointer just before
+    bdescr *last_bd;    // running a thread
+
     W_ alloc;      // total allocation in a capability
     W_ real_alloc; // DEBUG: to check with cap->total_allocated
     W_ blocks;     // blocks already allocated. The current allocation block is not counted here
@@ -23,16 +28,15 @@ typedef struct _ReplayData {
 
 extern rtsBool replay_enabled;
 
-#endif // REPLAY
+void initReplay(void);
+void endReplay(void);
 
 void replayPrint(char *s, ...);
 void replayError(char *s, ...);
-#if defined(DEBUG)
-void replayCheckGCGeneric(StgPtr Hp, Capability *cap, StgPtr HpLim, bdescr *CurrentNursery);
-#endif
-
 void replaySaveHp(Capability *cap);
 void replaySaveAlloc(Capability *cap, StgThreadReturnCode ret);
+
+void replayEvent(Capability *cap, Event *ev);
 
 #include "EndPrivate.h"
 

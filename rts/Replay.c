@@ -9,11 +9,29 @@
 #include "PosixSource.h"
 #include "Rts.h"
 
+#include "eventlog/EventLog.h"
 #include "Capability.h"
+#include "Event.h"
+#include "RtsFlags.h"
+#include "RtsUtils.h"
 #include "Trace.h"
 #include "Replay.h"
 
+#include <string.h>
+
 #define _ptr(p) ((void *)((StgWord)(p) & 0x0fffff))
+
+rtsBool replay_enabled = rtsFalse;
+
+HsBool
+rtsReplayEnabled(void)
+{
+#ifdef REPLAY
+  return HS_BOOL_TRUE;
+#else
+  return HS_BOOL_FALSE;
+#endif
+}
 
 #if defined(REPLAY)
 #define START(bd)       ((bd)->start - 1)
@@ -30,7 +48,37 @@
 
 #define HP_IN_BD(bd,p) (((p) >= START(bd)) && ((p) <= END(bd)))
 
-rtsBool replay_enabled = rtsTrue;
+
+void
+initReplay(void)
+{
+    replay_enabled = RtsFlags.ReplayFlags.replay == rtsTrue;
+
+    if (replay_enabled) {
+        initEventLoggingReplay();
+
+        // flag setup
+        initRtsFlagsDefaults();
+        RtsFlags.MiscFlags.tickInterval = 0;
+
+        // fake this events so that flags and env are copied
+#ifdef THREADED_RTS
+        replayEvent(NULL, createStartupEvent(RtsFlags.ParFlags.nNodes));
+#else
+        replayEvent(NULL, createStartupEvent(1));
+#endif
+        replayEvent(NULL, createEvent(EVENT_PROGRAM_ARGS));
+        replayEvent(NULL, createEvent(EVENT_PROGRAM_ENV));
+    }
+}
+
+void
+endReplay(void)
+{
+    if (replay_enabled) {
+        endEventLoggingReplay();
+    }
+}
 
 void
 replayPrint(char *s USED_IF_DEBUG, ...)
@@ -109,68 +157,347 @@ replaySaveHp(Capability *cap)
 void
 replaySaveAlloc(Capability *cap, StgThreadReturnCode ret)
 {
-    bdescr *oldBd = cap->replay.last_bd;
-    StgPtr  oldHp = cap->replay.last_hp;
+    bdescr *oldBd, *bd, *bd_;
+    StgPtr oldHp, hp;
 
-    bdescr *bd = cap->r.rCurrentNursery;
-    StgPtr  hp = START_FREE(bd);
+    oldBd = cap->replay.last_bd;
+    oldHp = cap->replay.last_hp;
 
-    ASSERT(hp == START_FREE(bd));
-    ASSERT(HP_IN_BD(oldBd, oldHp));
-    ASSERT(HP_IN_BD(bd, hp));
+    bd = cap->r.rCurrentNursery;
+    hp = START_FREE(bd);
+
+#ifdef DEBUG
+    debugBelch("Yielded at %p\n", _ptr(hp));
+#endif
+
+    // when replaying and only if the thread yielded
+    if (cap->replay.hp) {
+        ASSERT(ret == ThreadYielding);
+        ASSERT(hp == cap->replay.hp);
+
+        cap->replay.bd = NULL;
+        cap->replay.hp = NULL;
+    }
 
     W_ alloc = 0, n_blocks = 0;
     W_ slop = 0;
-    replayPrint("Saving alloc...\n");
-    replayPrint("  alloc before = %ld\n", cap->replay.alloc);
-    // Still same block
-    if (oldBd == bd) {
-        ASSERT(hp >= oldHp);
-        alloc += hp - oldHp;
-        cap->replay.real_alloc += hp - oldHp;
-    } else {
-        alloc += END(oldBd) - oldHp;
-        ASSERT(START_FREE(oldBd) >= oldHp);
-        cap->replay.real_alloc += START_FREE(oldBd) - oldHp;
 
-        bdescr *bd_ = oldBd->link;
+    ASSERT(START_FREE(oldBd) >= oldHp);
+
+    bd_ = oldBd;
+    while (bd_ != bd) {
+        ASSERT(FILLED(bd_) > 0);
+        alloc += SIZE(bd_);
+        cap->replay.real_alloc += FILLED(bd_);
+        n_blocks += bd_->blocks;
+        bd_ = bd_->link;
         ASSERT(bd_ != NULL);
-        while (bd_ != bd) {
-            ASSERT(FILLED(bd_) > 0);
-            alloc += SIZE(bd_);
-            cap->replay.real_alloc += FILLED(bd_);
-            n_blocks += bd_->blocks;
-            bd_ = bd_->link;
-            ASSERT(bd_ != NULL);
-        }
-
-        W_ last_alloc = hp - START(bd_);
-        alloc += last_alloc;
-        cap->replay.real_alloc += last_alloc;
-
-        // stopped just after securing a new block, we need to substract the
-        // slop from the previous block to get the exact allocation at which
-        // the thread stopped
-        if (ret == ThreadYielding && cap->r.rHpAlloc == 0) {
-            ASSERT(cap->interrupt || cap->context_switch);
-            ASSERT(EMPTY(bd_));
-            ASSERT(last_alloc == 0);
-            slop = SLOP(bd->u.back);
-        }
     }
+
+    W_ last_alloc = hp - START(bd_);
+    alloc += last_alloc;
+    cap->replay.real_alloc += last_alloc;
+
+    // substract the previouslly allocated memory from the first block, so the
+    // loop above can count full blocks in every iteration, including the
+    // first one
+    ASSERT(alloc >= (W_)(oldHp - START(oldBd)));
+    ASSERT(cap->replay.real_alloc >= (W_)(oldHp - START(oldBd)));
+    alloc -= oldHp - START(oldBd);
+    cap->replay.real_alloc -= oldHp - START(oldBd);
+
+    // stopped just after securing a new block, we need to substract the
+    // slop from the second to last block to get the exact allocation at which
+    // the thread stopped
+    if (ret == ThreadYielding && cap->r.rHpAlloc == 0) {
+        ASSERT(EMPTY(bd_));
+        ASSERT(bd == bd_);
+        ASSERT(last_alloc == 0);
+        slop = SLOP(bd->u.back);
+    }
+
     cap->replay.alloc += alloc;
     cap->replay.blocks += n_blocks;
-    replayPrint("\n  Found %" FMT_Word " blocks (%" FMT_Word "), total %" FMT_Word "\n\n",
-                n_blocks, alloc, cap->replay.alloc);
 
     traceCapAlloc(cap, cap->replay.alloc - slop, cap->replay.blocks, cap->r.rHpAlloc);
 
     cap->replay.last_bd = NULL;
     cap->replay.last_hp = NULL;
 }
+
+static void GNU_ATTRIBUTE(__noreturn__)
+failedMatch(Capability *cap, Event *ev, Event *read)
+{
+    debugBelch("Got:\n  ");
+    printEvent(cap, ev);
+    debugBelch("Expected:\n  ");
+    printEvent(cap, read);
+    barf("replay: '%s' events did not match", EventDesc[ev->header.tag]);
+}
+
+static rtsBool
+compareEvents(Event *ev, Event *read)
+{
+    ASSERT(ev);
+    ASSERT(read);
+    ASSERT(ev->header.tag == read->header.tag);
+
+    rtsBool r = rtsTrue;
+
+    if ((isVariableSizeEvent(ev->header.tag)
+            && eventSize(ev) != eventSize(read)) ||
+        (memcmp((StgWord8 *)ev + sizeof(EventHeader),
+                (StgWord8 *)read + sizeof(EventHeader),
+                eventSize(ev) - sizeof(EventHeader)) != 0)) {
+        r = rtsFalse;
+    }
+
+    return r;
+}
+
+static void
+setupNextEvent(void)
+{
+    CapEvent *ce;
+
+    ce = peekEvent(1);
+    if (ce == NULL) {
+        return;
+    }
+
+    switch(ce->ev->header.tag) {
+    case EVENT_STOP_THREAD:
+    {
+        // if yielded, setup the nursery to force the thread to stop
+        if (((EventStopThread *)ce->ev)->status == ThreadYielding) {
+            bdescr *bd;
+            StgPtr hp;
+            StgWord64 alloc, blocks;
+            Capability *cap;
+            EventCapAlloc *ev;
+
+            ce = peekEvent(2);
+            ASSERT(ce);
+            ev = (EventCapAlloc *)ce->ev;
+            ASSERT(ev->header.tag == EVENT_CAP_ALLOC);
+
+            ASSERT(ce->capno != (EventCapNo)-1);
+            cap = capabilities[ce->capno];
+
+            alloc = ev->alloc - cap->replay.alloc;
+            blocks = ev->blocks - cap->replay.blocks;
+
+            bd = cap->replay.last_bd;
+            hp = cap->replay.last_hp;
+
+            ASSERT(bd != NULL);
+            ASSERT(hp != NULL);
+
+
+            // add the allocated memory from the first block, so the loop counts
+            // full blocks in every iteration, including the first one
+            alloc += hp - START(bd);
+            while (alloc >= SIZE(bd)) {
+                ASSERT(alloc >= SIZE(bd));
+                alloc -= SIZE(bd);
+                ASSERT(blocks >= bd->blocks);
+                blocks -= bd->blocks;
+                bd = bd->link;
+                ASSERT(bd != NULL);
+            }
+            ASSERT(bd);
+
+            // if the allocation is proportional to the block size, the thread
+            // will stop itself to ask for a new block. In the case it is not
+            // or when the thread run for a bit until its first allocation in
+            // the new block, we need to force the thread to stop earlier by
+            // modifying the block start pointer so that it thinks it has less
+            // memory available.
+            if (alloc == 0 && ev->hp_alloc == 0) {
+                ASSERT(blocks == 0);
+                cap->replay.hp = START(bd);
+            } else {
+                cap->replay.bd = bd;
+                //cap->replay.bd_start = bd->start;
+                bd->start += alloc - SIZE(bd); // so that HpLim points to START(bd) + 'alloc'
+                                               // e.g. HpLim = bd->start + SIZE(bd)
+                // allocated a new block before yielding
+                if (blocks == 1) {
+                    bd = bd->link;
+                    cap->replay.hp = START(bd);
+                } else {
+                    ASSERT(blocks == 0);
+                    ASSERT(ev->hp_alloc != 0);
+                    cap->replay.hp = END(bd); // yield when Hp == HpLim == END(bd)
+                    //cap->replay.bd_link = bd->link;
+                    //bd->link = NULL; // to prevent the allocation of a new block
+                }
+            }
+
+            // if we have to yield in the current block, set HpLim now
+            if (cap->r.rCurrentNursery == bd) {
+                ASSERT(bd == cap->replay.last_bd);
+                cap->r.rHpLim = END(bd);
+            }
+        }
+        break;
+    }
+    default:
+        ; // do nothing
+    }
+}
+
+//extern char **environ;
+
+void
+replayEvent(Capability *cap, Event *ev)
+{
+    ASSERT(ev);
+
+    CapEvent *ce;
+    Event *read;
+    nat tag;
+
+    ce = nextEvent();
+    ASSERTM(ce != NULL && ce->ev != NULL, "replayEvent: event could not be read");
+    read = ce->ev;
+    tag = ev->header.tag;
+
+    if (tag != read->header.tag) {
+        failedMatch(cap, ev, read);
+    }
+
+    if (cap != NULL) {
+        ASSERTM(cap->no == ce->capno,
+                "replay: %s event: got event from capability "
+                "%d instead of %d",
+                EventDesc[tag], cap->no, ce->capno);
+    }
+
+    switch (tag) {
+    // set program arguments and environment
+    case EVENT_PROGRAM_ARGS:
+    case EVENT_PROGRAM_ENV:
+    {
+        EventCapsetMsg *ecm_read;
+        int argc, arg, i, strsize;
+        char **argv;
+
+        ecm_read = (EventCapsetMsg *)read;
+        strsize = ecm_read->size - sizeof(EventCapsetID);
+        for (i = 0, argc = 0; i < strsize; i++) {
+            if (ecm_read->msg[i] == '\0') {
+                argc++;
+            }
+        }
+        ASSERT(argc > 0);
+
+        argv = stgMallocBytes((argc + 1) * sizeof(char *), "replayEvent");
+        for (i = 0, arg = 0; arg < argc; i++, arg++) {
+            ASSERT(i < strsize);
+            argv[arg] = (char *)&ecm_read->msg[i];
+            i = strchr(argv[arg], '\0') - (char *)ecm_read->msg;
+        }
+        argv[arg] = NULL;
+
+        if (tag == EVENT_PROGRAM_ARGS) {
+            freeRtsArgs();
+
+            setFullProgArgv(argc, argv);
+            setupRtsFlags(&argc, argv, RtsOptsAll, NULL, rtsTrue);
+        } else {
+            //int r;
+
+            //environ = NULL;
+
+            //// putenv does not copy the string
+            //for (arg = 0; arg < argc; arg++) {
+            //    char *new_arg = stgMallocBytes(strlen(argv[arg]) + 1, "replayEvent");
+            //    strcpy(new_arg, argv[arg]);
+            //    r = putenv(new_arg);
+            //    if (r != 0) {
+            //        barf("Could not set environment variable '%s'. Execution Replay may fail\n", new_arg);
+            //    }
+            //}
+        }
+        stgFree(argv);
+        break;
+    }
+    case EVENT_OSPROCESS_PID:
+    case EVENT_OSPROCESS_PPID:
+    {
+        EventCapsetPid *ecp, *ecp_read;
+
+        ecp = (EventCapsetPid *)ev;
+        ecp_read = (EventCapsetPid *)read;
+        // ignore pid
+        if (ecp->capset != ecp_read->capset) {
+            failedMatch(cap, ev, read);
+        }
+        break;
+    }
+    case EVENT_WALL_CLOCK_TIME:
+    {
+        EventWallClockTime *ewct, *ewct_read;
+
+        ewct = (EventWallClockTime *)ev;
+        ewct_read = (EventWallClockTime *)read;
+        // ignore time
+        if (ewct->capset != ewct_read->capset) {
+            failedMatch(cap, ev, read);
+        }
+        break;
+    }
+    case EVENT_THREAD_LABEL:
+    {
+        EventThreadLabel *etl, *etl_read;
+        EventPayloadSize size;
+
+        etl = (EventThreadLabel *)ev;
+        etl_read = (EventThreadLabel *)read;
+        // ignore tid
+        size = etl->size - sizeof(EventThreadID);
+        if (etl->size != etl_read->size ||
+            strncmp((const char *)etl->label, (const char *)etl_read->label,
+                    size) != 0) {
+            failedMatch(cap, ev, read);
+        }
+        break;
+    }
+    case EVENT_TASK_CREATE:
+    {
+        EventTaskCreate *etc, *etc_read;
+
+        etc = (EventTaskCreate *)ev;
+        etc_read = (EventTaskCreate *)read;
+        // ignore tid
+        if (etc->task != etc_read->task || etc->capno != etc_read->capno) {
+            failedMatch(cap, ev, read);
+        }
+        break;
+    }
+    default:
+        if (!compareEvents(ev, read)) {
+            failedMatch(cap, ev, read);
+        }
+        break;
+    }
+
+#ifdef DEBUG
+    printEvent(cap, ev);
+#endif
+
+    freeEvent(ce);
+    stgFree(ev);
+
+    setupNextEvent();
+}
 #else
+void initReplay(void) {}
+void endReplay(void) {}
 void replayPrint(char *s STG_UNUSED, ...) {}
 void replayError(char *s STG_UNUSED, ...) {}
 void replaySaveHp(Capability *cap STG_UNUSED) {}
 void replaySaveAlloc(Capability *cap STG_UNUSED, StgThreadReturnCode ret STG_UNUSED) {}
+void replayEvent(Capability *cap STG_UNUSED, Event *ev STG_UNUSED) {}
 #endif

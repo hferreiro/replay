@@ -77,7 +77,7 @@ typedef struct _OrderedEvent {
 static OrderedEvent *eventList = NULL;
 static nat eventListSize = 0;
 
-char *EventDesc[] = {
+const char *EventDesc[] = {
   [EVENT_CREATE_THREAD]       = "Create thread",
   [EVENT_RUN_THREAD]          = "Run thread",
   [EVENT_STOP_THREAD]         = "Stop thread",
@@ -137,8 +137,8 @@ char *EventDesc[] = {
 
 typedef struct _EventType {
   EventTypeNum etNum;  // Event Type number.
-  nat   size;     // size of the payload in bytes
-  char *desc;     // Description
+  nat size;            // size of the payload in bytes
+  const char *desc;    // Description
 } EventType;
 
 EventType eventTypes[NUM_GHC_EVENT_TAGS];
@@ -151,7 +151,7 @@ static void printAndClearEventBuf (EventsBuf *eventsBuf);
 
 static void postEventType(EventsBuf *eb, EventType *et);
 
-static void postLogMsg(EventsBuf *eb, EventTypeNum type, char *msg, va_list ap);
+static void postLogMsg(EventsBuf *eb, EventTypeNum type, const char *msg, va_list ap);
 
 static void postBlockMarker(EventsBuf *eb);
 static void closeBlockMarker(EventsBuf *ebuf);
@@ -187,9 +187,6 @@ static inline void postBuf(EventsBuf *eb, StgWord8 *buf, nat size)
     memcpy(eb->pos, buf, size);
     eb->pos += size;
 }
-
-static inline StgWord64 time_ns(void)
-{ return TimeToNS(stat_getElapsedTime()); }
 
 static inline void postEventTypeNum(EventsBuf *eb, EventTypeNum etNum)
 { postWord16(eb, etNum); }
@@ -233,6 +230,7 @@ static inline void postInt8(EventsBuf *eb, StgInt8 i)
 static inline void postInt32(EventsBuf *eb, StgInt32 i)
 { postWord32(eb, (StgWord32)i); }
 
+#ifdef REPLAY
 static inline int readWord8(ReplayBuf *rb, StgWord8 *i)
 {
     FILE *f;
@@ -409,7 +407,7 @@ static OrderedEvent *eventListN(nat n);
 static OrderedEvent *eventListNew(CapEvent *ce);
 static OrderedEvent *eventListNext(void);
 static void eventListForward(void);
-
+#endif
 
 static StgBool
 initEventType(StgWord8 t)
@@ -957,7 +955,7 @@ void postCapsetEvent (EventTypeNum tag,
 
 void postCapsetStrEvent (EventTypeNum tag,
                          EventCapsetID capset,
-                         char *msg)
+                         const char *msg)
 {
     int strsize = strlen(msg);
     int size = strsize + sizeof(EventCapsetID);
@@ -986,7 +984,7 @@ void postCapsetStrEvent (EventTypeNum tag,
 void postCapsetVecEvent (EventTypeNum tag,
                          EventCapsetID capset,
                          int argc,
-                         char *argv[])
+                         const char *argv[])
 {
     int i, size = sizeof(EventCapsetID);
 
@@ -1250,7 +1248,7 @@ postEventAtTimestamp (Capability *cap, EventTimestamp ts, EventTypeNum tag)
     postWord64(eb, ts);
 }
 
-void postLogMsg(EventsBuf *eb, EventTypeNum type, char *msg, va_list ap)
+void postLogMsg(EventsBuf *eb, EventTypeNum type, const char *msg, va_list ap)
 {
     char buf[BUF];
     nat size;
@@ -1272,19 +1270,19 @@ void postLogMsg(EventsBuf *eb, EventTypeNum type, char *msg, va_list ap)
     postBuf(eb,(StgWord8*)buf,size);
 }
 
-void postMsg(char *msg, va_list ap)
+void postMsg(const char *msg, va_list ap)
 {
     ACQUIRE_LOCK(&eventBufMutex);
     postLogMsg(&eventBuf, EVENT_LOG_MSG, msg, ap);
     RELEASE_LOCK(&eventBufMutex);
 }
 
-void postCapMsg(Capability *cap, char *msg, va_list ap)
+void postCapMsg(Capability *cap, const char *msg, va_list ap)
 {
     postLogMsg(&capEventBuf[cap->no], EVENT_LOG_MSG, msg, ap);
 }
 
-void postUserMsg(Capability *cap, char *msg, va_list ap)
+void postUserMsg(Capability *cap, const char *msg, va_list ap)
 {
     postLogMsg(&capEventBuf[cap->no], EVENT_USER_MSG, msg, ap);
 }    
@@ -1305,7 +1303,7 @@ void postEventStartup(EventCapNo n_caps)
     RELEASE_LOCK(&eventBufMutex);
 }
 
-void postUserMarker(Capability *cap, char *markername)
+void postUserMarker(Capability *cap, const char *markername)
 {
     EventsBuf *eb;
     int size = strlen(markername);
@@ -1328,7 +1326,7 @@ void postUserMarker(Capability *cap, char *markername)
 
 void postThreadLabel(Capability    *cap,
                      EventThreadID  id,
-                     char          *label)
+                     const char    *label)
 {
     EventsBuf *eb;
     int strsize = strlen(label);
@@ -1488,6 +1486,7 @@ void postEventType(EventsBuf *eb, EventType *et)
     postInt32(eb, EVENT_ET_END);
 }
 
+#ifdef REPLAY
 void
 initEventLoggingReplay(void)
 {
@@ -2168,5 +2167,6 @@ freeEvent(CapEvent *ce)
     stgFree(ce->ev);
     stgFree(ce);
 }
+#endif /* REPLAY */
 
 #endif /* TRACING */
