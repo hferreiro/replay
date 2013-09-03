@@ -326,24 +326,48 @@ emitOpenNursery = do
 
 openNursery :: DynFlags -> CmmAGraph
 openNursery dflags = catAGraphs [
-        -- Hp = CurrentNursery->free - 1;
-        mkAssign hp (cmmOffsetW dflags (CmmLoad (nursery_bdescr_free dflags) (bWord dflags)) (-1)),
+    -- Hp = CurrentNursery->free - 1;
+    mkAssign hp (cmmOffsetW dflags (CmmLoad (nursery_bdescr_free dflags) (bWord dflags)) (-1)),
 
-        -- HpLim = CurrentNursery->start +
-        --              CurrentNursery->blocks*BLOCK_SIZE_W - 1;
-        mkAssign hpLim
-            (cmmOffsetExpr dflags
-                (CmmLoad (nursery_bdescr_start dflags) (bWord dflags))
-                (cmmOffset dflags
-                  (CmmMachOp (mo_wordMul dflags) [
-                    CmmMachOp (MO_SS_Conv W32 (wordWidth dflags))
-                      [CmmLoad (nursery_bdescr_blocks dflags) b32],
-                    mkIntExpr dflags (bLOCK_SIZE dflags)
-                   ])
-                  (-1)
-                )
-            )
-   ]
+    -- if (CurrentNursery == cap->replay.bd)
+    --   HpLim = cap->replay.hp;
+    -- else
+    --   HpLim = CurrentNursery->start +
+    --             CurrentNursery->blocks*BLOCK_SIZE_W - 1;
+    -- ==>
+    -- HpLim = replayHpLim * isReplayBd +
+    --         realHpLim * !isReplayBd;
+    mkAssign hpLim result
+  ]
+  where
+    result =
+      (cmmAddWord dflags
+        (cmmMulWord dflags replayHpLim isReplayBd)
+        (cmmMulWord dflags realHpLim   (cmmEqWord dflags isReplayBd (zeroExpr dflags)))
+      )
+
+    isReplayBd = cmmEqWord dflags stgCurrentNursery replayBd
+    replayBd = CmmLoad (cmmOffset dflags myCapability
+                          (oFFSET_Capability_replay_bd dflags))
+                       (bWord dflags)
+
+    replayHpLim = CmmLoad (cmmOffset dflags myCapability
+                             (oFFSET_Capability_replay_hp dflags))
+                          (bWord dflags)
+
+    realHpLim =
+      (cmmOffsetExpr dflags
+        (CmmLoad (nursery_bdescr_start dflags) (bWord dflags))
+        (cmmOffset dflags
+          (cmmMulWord dflags
+            (CmmMachOp (mo_s_32ToWord dflags)
+               [CmmLoad (nursery_bdescr_blocks dflags) b32])
+            (mkIntExpr dflags (bLOCK_SIZE dflags)))
+          (-1)
+        )
+      )
+
+    myCapability = cmmOffset dflags (CmmReg baseReg) (negate $ oFFSET_Capability_r dflags)
 
 nursery_bdescr_free, nursery_bdescr_start, nursery_bdescr_blocks :: DynFlags -> CmmExpr
 nursery_bdescr_free   dflags = cmmOffset dflags stgCurrentNursery (oFFSET_bdescr_free dflags)

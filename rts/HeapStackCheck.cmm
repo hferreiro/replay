@@ -82,6 +82,12 @@ import LeaveCriticalSection;
  * ThreadRunGHC thread.
  */
 
+#ifdef REPLAY
+#define yield_hp        Capability_replay_hp(MyCapability())
+#define yield_hp_alloc  Capability_replay_hp_alloc(MyCapability())
+#define yield_bd        Capability_replay_bd(MyCapability())
+#endif
+
 stg_gc_noregs
 {
     W_ ret;
@@ -99,8 +105,13 @@ stg_gc_noregs
             OPEN_NURSERY();
         }
         if (HpLim == 0 ||
+#ifdef REPLAY
+            (CurrentNursery == yield_bd && Hp == yield_hp)
+#else
             Capability_context_switch(MyCapability()) != 0 :: CInt ||
-            Capability_interrupt(MyCapability())      != 0 :: CInt) {
+            Capability_interrupt(MyCapability())      != 0 :: CInt
+#endif
+            ) {
             ret = ThreadYielding;
             goto sched;
         }

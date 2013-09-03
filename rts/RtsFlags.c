@@ -187,6 +187,10 @@ void initRtsFlagsDefaults(void)
     RtsFlags.TraceFlags.user          = rtsFalse;
 #endif
 
+#if defined(REPLAY)
+    RtsFlags.ReplayFlags.replay       = rtsFalse;
+#endif
+
 #ifdef PROFILING
     // When profiling we want a lot more ticks
     RtsFlags.MiscFlags.tickInterval     = USToTime(1000);  // 1ms
@@ -307,6 +311,9 @@ usage_text[] = {
 
 #ifdef TRACING
 "",
+#ifdef REPLAY
+"  --replay   Use a <program>.replay log to replay a previous execution",
+#endif
 "  -l[flags]  Log events in binary format to the file <program>.eventlog",
 #  ifdef DEBUG
 "  -v[flags]  Log events to stderr",
@@ -677,6 +684,14 @@ errorBelch("the flag %s requires the program to be built with -eventlog or -debu
 error = rtsTrue;
 #endif
 
+#ifdef REPLAY
+# define REPLAY_BUILD_ONLY(x)   x
+#else
+# define REPLAY_BUILD_ONLY(x) \
+errorBelch("the flag %s requires the program to be built with -threaded and, -eventlog or -debug", rts_argv[arg]); \
+error = rtsTrue;
+#endif
+
 #ifdef THREADED_RTS
 # define THREADED_BUILD_ONLY(x)      x
 #else
@@ -723,6 +738,13 @@ error = rtsTrue;
                       OPTION_SAFE;
                       printRtsInfo();
                       stg_exit(0);
+                  }
+                  else if (strequal("replay",
+                               &rts_argv[arg][2])) {
+                      REPLAY_BUILD_ONLY(
+                          OPTION_UNSAFE;
+                          RtsFlags.ReplayFlags.replay = rtsTrue;
+                      );
                   }
                   else {
                       OPTION_SAFE;

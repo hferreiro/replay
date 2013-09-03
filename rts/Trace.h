@@ -84,6 +84,34 @@ extern int TRACE_spark_full;
 #ifdef DEBUG
 void traceBegin (const char *str, ...);
 void traceEnd (void);
+
+extern const char *thread_stop_reasons[];
+
+// stderr functions
+void traceSchedEvent_stderr (Capability *cap, EventTypeNum tag,
+                             StgTSO *tso,
+                             StgWord info1,
+                             StgWord info2);
+void traceGcEvent_stderr (Capability *cap, EventTypeNum tag);
+void traceCapEvent_stderr (Capability   *cap,
+                           EventTypeNum  tag);
+void traceCapsetEvent_stderr (EventTypeNum tag,
+                              CapsetID     capset,
+                              StgWord      info);
+void traceSparkEvent_stderr (Capability *cap, EventTypeNum tag,
+                             StgWord info1);
+void traceTaskEvent_stderr(EventTypeNum tag, EventTaskId taskid,
+                           EventCapNo capno, EventCapNo new_capno);
+void traceCap_stderr (Capability *cap, const char *msg, ...);
+void trace_stderr (const char *msg, ...);
+void traceThreadLabel_stderr (Capability *cap,
+                              StgTSO     *tso,
+                              const char *label);
+void traceEventStartup_stderr (int nocaps);
+void traceCapAlloc_stderr(Capability *cap,
+                          W_          alloc,
+                          W_          blocks,
+                          W_          hp_alloc);
 #endif
 
 #ifdef TRACING
@@ -180,7 +208,7 @@ void traceSparkEvent_ (Capability *cap, EventTypeNum tag, StgWord info1);
         traceCap_(cap, msg, ##__VA_ARGS__);     \
     }
 
-void traceCap_(Capability *cap, char *msg, ...);
+void traceCap_(Capability *cap, const char *msg, ...);
 
 /* 
  * Emit a trace message
@@ -190,19 +218,19 @@ void traceCap_(Capability *cap, char *msg, ...);
         trace_(msg, ##__VA_ARGS__);             \
     }
 
-void trace_(char *msg, ...);
+void trace_(const char *msg, ...);
 
 /* 
  * A message or event emitted by the program
  * Used by Debug.Trace.{traceEvent, traceEventIO}
  */
-void traceUserMsg(Capability *cap, char *msg);
+void traceUserMsg(Capability *cap, const char *msg);
 
 /* 
  * A marker event emitted by the program
  * Used by Debug.Trace.{traceMarker, traceMarkerIO}
  */
-void traceUserMarker(Capability *cap, char *msg);
+void traceUserMarker(Capability *cap, const char *msg);
 
 /*
  * An event to record a Haskell thread's label/name
@@ -210,7 +238,7 @@ void traceUserMarker(Capability *cap, char *msg);
  */
 void traceThreadLabel_(Capability *cap,
                        StgTSO     *tso,
-                       char       *label);
+                       const char *label);
 
 /* 
  * Emit a debug message (only when DEBUG is defined)
@@ -586,7 +614,7 @@ INLINE_HEADER void traceEventThreadWakeup(Capability *cap       STG_UNUSED,
 
 INLINE_HEADER void traceThreadLabel(Capability *cap   STG_UNUSED,
                                     StgTSO     *tso   STG_UNUSED,
-                                    char       *label STG_UNUSED)
+                                    const char *label STG_UNUSED)
 {
     if (RTS_UNLIKELY(TRACE_sched)) {
         traceThreadLabel_(cap, tso, label);

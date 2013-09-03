@@ -94,6 +94,8 @@ struct Capability_ {
     // reset after we have executed the context switch.
     int interrupt;
 
+    ReplayData replay;
+
 #if defined(THREADED_RTS)
     // Worker Tasks waiting in the wings.  Singly-linked.
     Task *spare_workers;
@@ -122,10 +124,6 @@ struct Capability_ {
 
     // Stats on spark creation/conversion
     SparkCounters spark_stats;
-#endif
-
-#if defined(REPLAY)
-    ReplayData replay;
 #endif
 
     // Total words allocated by this cap since rts start

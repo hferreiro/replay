@@ -177,7 +177,7 @@ static void tracePreface (void)
 #endif
 
 #ifdef DEBUG
-static char *thread_stop_reasons[] = {
+const char *thread_stop_reasons[] = {
     [HeapOverflow] = "heap overflow",
     [StackOverflow] = "stack overflow",
     [ThreadYielding] = "yielding",
@@ -200,10 +200,10 @@ static char *thread_stop_reasons[] = {
 #endif
 
 #ifdef DEBUG
-static void traceSchedEvent_stderr (Capability *cap, EventTypeNum tag, 
-                                    StgTSO *tso, 
-                                    StgWord info1 STG_UNUSED,
-                                    StgWord info2 STG_UNUSED)
+void traceSchedEvent_stderr (Capability *cap, EventTypeNum tag,
+                             StgTSO *tso,
+                             StgWord info1 STG_UNUSED,
+                             StgWord info2 STG_UNUSED)
 {
     ACQUIRE_LOCK(&trace_utx);
 
@@ -259,17 +259,29 @@ void traceSchedEvent_ (Capability *cap, EventTypeNum tag,
 #endif
     {
         postSchedEvent(cap,tag,tso ? tso->id : 0, info1, info2);
+    }
 
-        if (tag == EVENT_RUN_THREAD) {
-            replaySaveHp(cap);
-        } else if (tag == EVENT_STOP_THREAD) {
-            replaySaveAlloc(cap, info1);
-        }
+    if (RtsFlags.TraceFlags.tracing != TRACE_STDERR &&
+        tag == EVENT_RUN_THREAD) {
+        // before replay because replaying RUN_THREAD with a STOP_THREAD
+        // inmediately afterwards will require the saved Hp to calculate the
+        // yield block
+        replaySaveHp(cap);
+    }
+
+    if (replay_enabled) {
+        replayEvent(cap, createSchedEvent(tag, tso, info1, info2));
+    }
+
+    if (RtsFlags.TraceFlags.tracing != TRACE_STDERR &&
+        tag == EVENT_STOP_THREAD) {
+        // after replay because it emits EVENT_CAP_ALLOC
+        replaySaveAlloc(cap, info1);
     }
 }
 
 #ifdef DEBUG
-static void traceGcEvent_stderr (Capability *cap, EventTypeNum tag)
+void traceGcEvent_stderr (Capability *cap, EventTypeNum tag)
 {
     ACQUIRE_LOCK(&trace_utx);
 
@@ -319,6 +331,10 @@ void traceGcEvent_ (Capability *cap, EventTypeNum tag)
         /* currently all GC events are nullary events */
         postEvent(cap, tag);
     }
+
+    if (replay_enabled) {
+        replayEvent(cap, createGcEvent(tag));
+    }
 }
 
 void traceGcEventAtT_ (Capability *cap, StgWord64 ts, EventTypeNum tag)
@@ -331,6 +347,10 @@ void traceGcEventAtT_ (Capability *cap, StgWord64 ts, EventTypeNum tag)
     {
         /* assuming nullary events and explicitly inserting a timestamp */
         postEventAtTimestamp(cap, ts, tag);
+    }
+
+    if (replay_enabled) {
+        replayEvent(cap, createGcEvent(tag));
     }
 }
 
@@ -346,6 +366,10 @@ void traceHeapEvent_ (Capability   *cap,
 #endif
     {
         postHeapEvent(cap, tag, heap_capset, info1);
+    }
+
+    if (replay_enabled) {
+        replayEvent(cap, createHeapEvent(tag, heap_capset, info1));
     }
 }
 
@@ -365,6 +389,15 @@ void traceEventHeapInfo_ (CapsetID    heap_capset,
         postEventHeapInfo(heap_capset, gens,
                           maxHeapSize, allocAreaSize,
                           mblockSize, blockSize);
+    }
+
+    if (replay_enabled) {
+        replayEvent(NULL, createHeapInfoEvent(heap_capset,
+                                              gens,
+                                              maxHeapSize,
+                                              allocAreaSize,
+                                              mblockSize,
+                                              blockSize));
     }
 }
 
@@ -388,31 +421,51 @@ void traceEventGcStats_  (Capability *cap,
                          copied, slop, fragmentation,
                          par_n_threads, par_max_copied, par_tot_copied);
     }
+
+    if (replay_enabled) {
+        replayEvent(cap, createGcStatsEvent(heap_capset,
+                                            gen,
+                                            copied,
+                                            slop,
+                                            fragmentation,
+                                            par_n_threads,
+                                            par_max_copied,
+                                            par_tot_copied));
+    }
 }
+
+#ifdef DEBUG
+void traceCapEvent_stderr (Capability   *cap,
+                           EventTypeNum  tag)
+{
+    ACQUIRE_LOCK(&trace_utx);
+
+    tracePreface();
+    switch (tag) {
+    case EVENT_CAP_CREATE:   // (cap)
+        debugBelch("cap %d: initialised\n", cap->no);
+        break;
+    case EVENT_CAP_DELETE:   // (cap)
+        debugBelch("cap %d: shutting down\n", cap->no);
+        break;
+    case EVENT_CAP_ENABLE:   // (cap)
+        debugBelch("cap %d: enabling capability\n", cap->no);
+        break;
+    case EVENT_CAP_DISABLE:  // (cap)
+        debugBelch("cap %d: disabling capability\n", cap->no);
+        break;
+    }
+
+    RELEASE_LOCK(&trace_utx);
+}
+#endif
 
 void traceCapEvent (Capability   *cap,
                     EventTypeNum  tag)
 {
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
-        ACQUIRE_LOCK(&trace_utx);
-
-        tracePreface();
-        switch (tag) {
-        case EVENT_CAP_CREATE:   // (cap)
-            debugBelch("cap %d: initialised\n", cap->no);
-            break;
-        case EVENT_CAP_DELETE:   // (cap)
-            debugBelch("cap %d: shutting down\n", cap->no);
-            break;
-        case EVENT_CAP_ENABLE:   // (cap)
-            debugBelch("cap %d: enabling capability\n", cap->no);
-            break;
-        case EVENT_CAP_DISABLE:  // (cap)
-            debugBelch("cap %d: disabling capability\n", cap->no);
-            break;
-        }
-        RELEASE_LOCK(&trace_utx);
+        traceCapEvent_stderr(cap, tag);
     } else
 #endif
     {
@@ -420,7 +473,40 @@ void traceCapEvent (Capability   *cap,
             postCapEvent(tag, (EventCapNo)cap->no);
         }
     }
+
+    if (replay_enabled) {
+        replayEvent(NULL, createCapEvent(tag, cap->no));
+    }
 }
+
+#ifdef DEBUG
+void traceCapsetEvent_stderr (EventTypeNum tag,
+                              CapsetID     capset,
+                              StgWord      info)
+{
+    ACQUIRE_LOCK(&trace_utx);
+
+    tracePreface();
+    switch (tag) {
+    case EVENT_CAPSET_CREATE:   // (capset, capset_type)
+        debugBelch("created capset %" FMT_Word " of type %d\n", (W_)capset, (int)info);
+        break;
+    case EVENT_CAPSET_DELETE:   // (capset)
+        debugBelch("deleted capset %" FMT_Word "\n", (W_)capset);
+        break;
+    case EVENT_CAPSET_ASSIGN_CAP:  // (capset, capno)
+        debugBelch("assigned cap %" FMT_Word " to capset %" FMT_Word "\n",
+                   (W_)info, (W_)capset);
+        break;
+    case EVENT_CAPSET_REMOVE_CAP:  // (capset, capno)
+        debugBelch("removed cap %" FMT_Word " from capset %" FMT_Word "\n",
+                   (W_)info, (W_)capset);
+        break;
+    }
+
+    RELEASE_LOCK(&trace_utx);
+}
+#endif
 
 void traceCapsetEvent (EventTypeNum tag,
                        CapsetID     capset,
@@ -431,26 +517,7 @@ void traceCapsetEvent (EventTypeNum tag,
         // When events go to stderr, it is annoying to see the capset
         // events every time, so we only emit them with -Ds.
     {
-        ACQUIRE_LOCK(&trace_utx);
-
-        tracePreface();
-        switch (tag) {
-        case EVENT_CAPSET_CREATE:   // (capset, capset_type)
-            debugBelch("created capset %" FMT_Word " of type %d\n", (W_)capset, (int)info);
-            break;
-        case EVENT_CAPSET_DELETE:   // (capset)
-            debugBelch("deleted capset %" FMT_Word "\n", (W_)capset);
-            break;
-        case EVENT_CAPSET_ASSIGN_CAP:  // (capset, capno)
-            debugBelch("assigned cap %" FMT_Word " to capset %" FMT_Word "\n",
-                       (W_)info, (W_)capset);
-            break;
-        case EVENT_CAPSET_REMOVE_CAP:  // (capset, capno)
-            debugBelch("removed cap %" FMT_Word " from capset %" FMT_Word "\n",
-                       (W_)info, (W_)capset);
-            break;
-        }
-        RELEASE_LOCK(&trace_utx);
+        traceCapsetEvent_stderr(tag, capset, info);
     } else
 #endif
     {
@@ -458,16 +525,43 @@ void traceCapsetEvent (EventTypeNum tag,
             postCapsetEvent(tag, capset, info);
         }
     }
+
+    if (replay_enabled) {
+        replayEvent(NULL, createCapsetEvent(tag, capset, info));
+    }
 }
 
 void traceWallClockTime_(void) {
     if (eventlog_enabled) {
         postWallClockTime(CAPSET_CLOCKDOMAIN_DEFAULT);
     }
+
+    if (replay_enabled) {
+        replayEvent(NULL, createWallClockTimeEvent(CAPSET_CLOCKDOMAIN_DEFAULT));
+    }
 }
 
 void traceOSProcessInfo_(void) {
     if (eventlog_enabled) {
+        {
+            int argc = 0; char **argv;
+            getFullProgArgv(&argc, &argv);
+            if (argc != 0) {
+                postCapsetVecEvent(EVENT_PROGRAM_ARGS,
+                                   CAPSET_OSPROCESS_DEFAULT,
+                                   argc, (const char **)argv);
+            }
+        }
+        {
+            int envc = 0; char **envv;
+            getProgEnvv(&envc, &envv);
+            if (envc != 0) {
+                postCapsetVecEvent(EVENT_PROGRAM_ENV,
+                                   CAPSET_OSPROCESS_DEFAULT,
+                                   envc, (const char **)envv);
+            }
+            freeProgEnvv(envc, envv);
+        }
         postCapsetEvent(EVENT_OSPROCESS_PID,
                         CAPSET_OSPROCESS_DEFAULT,
                         getpid());
@@ -488,31 +582,32 @@ void traceOSProcessInfo_(void) {
                                CAPSET_OSPROCESS_DEFAULT,
                                buf);
         }
+    }
+
+    if (replay_enabled) {
+        // ARGS and ENV events have been replayed in initReplay
+        replayEvent(NULL, createCapsetEvent(EVENT_OSPROCESS_PID,
+                                            CAPSET_OSPROCESS_DEFAULT,
+                                            getpid()));
+
+#if !defined(cygwin32_HOST_OS) && !defined (mingw32_HOST_OS)
+        replayEvent(NULL, createCapsetEvent(EVENT_OSPROCESS_PPID,
+                                            CAPSET_OSPROCESS_DEFAULT,
+                                            getppid()));
+#endif
         {
-            int argc = 0; char **argv;
-            getFullProgArgv(&argc, &argv);
-            if (argc != 0) {
-                postCapsetVecEvent(EVENT_PROGRAM_ARGS,
-                                   CAPSET_OSPROCESS_DEFAULT,
-                                   argc, argv);
-            }
-        }
-        {
-            int envc = 0; char **envv;
-            getProgEnvv(&envc, &envv);
-            if (envc != 0) {
-                postCapsetVecEvent(EVENT_PROGRAM_ENV,
-                                   CAPSET_OSPROCESS_DEFAULT,
-                                   envc, envv);
-            }
-            freeProgEnvv(envc, envv);
+            char buf[256];
+            snprintf(buf, sizeof(buf), "GHC-%s %s", ProjectVersion, RtsWay);
+            replayEvent(NULL, createCapsetStrEvent(EVENT_RTS_IDENTIFIER,
+                                                   CAPSET_OSPROCESS_DEFAULT,
+                                                   buf));
         }
     }
 }
 
 #ifdef DEBUG
-static void traceSparkEvent_stderr (Capability *cap, EventTypeNum tag, 
-                                    StgWord info1)
+void traceSparkEvent_stderr (Capability *cap, EventTypeNum tag,
+                             StgWord info1)
 {
     ACQUIRE_LOCK(&trace_utx);
 
@@ -570,6 +665,10 @@ void traceSparkEvent_ (Capability *cap, EventTypeNum tag, StgWord info1)
     {
         postSparkEvent(cap,tag,info1);
     }
+
+    if (replay_enabled) {
+        replayEvent(cap, createSparkEvent(tag, info1));
+    }
 }
 
 void traceSparkCounters_ (Capability *cap,
@@ -585,20 +684,54 @@ void traceSparkCounters_ (Capability *cap,
     {
         postSparkCountersEvent(cap, counters, remaining);
     }
+
+    if (replay_enabled) {
+        replayEvent(cap, createSparkCountersEvent(counters, remaining));
+    }
 }
+
+#ifdef DEBUG
+void traceTaskEvent_stderr(EventTypeNum tag, EventTaskId taskid,
+                           EventCapNo capno, EventCapNo new_capno)
+{
+    ACQUIRE_LOCK(&trace_utx);
+
+    tracePreface();
+    switch (tag) {
+    case EVENT_TASK_CREATE:     // (taskID, cap)
+        debugBelch("task %" FMT_Word64 " created on cap %d\n", taskid, capno);
+        break;
+    case EVENT_TASK_MIGRATE:    // (taskID, cap, new_cap)
+        debugBelch("task %" FMT_Word64 " migrated from cap %d to cap %d\n",
+                   taskid, capno, new_capno);
+        break;
+    case EVENT_TASK_DELETE:     // (taskID)
+        debugBelch("task %" FMT_Word64 " deleted\n", taskid);
+        break;
+    }
+
+    RELEASE_LOCK(&trace_utx);
+}
+#endif
 
 void traceTaskCreate_ (Task       *task,
                        Capability *cap)
 {
+    EventTaskId taskid = serialisableTaskId(task);
+    EventCapNo capno = cap->no;
+
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
-        debugBelch("cap %d: task %d created\n", cap->no, task->no);
+        traceTaskEvent_stderr(EVENT_TASK_CREATE, taskid, capno, 0);
     } else
 #endif
     {
-        EventTaskId         taskid = serialisableTaskId(task);
-        EventKernelThreadId tid    = kernelThreadId();
-        postTaskCreateEvent(taskid, cap->no, tid);
+        EventKernelThreadId tid = kernelThreadId();
+        postTaskCreateEvent(taskid, capno, tid);
+    }
+
+    if (replay_enabled) {
+        replayEvent(NULL, createTaskCreateEvent(taskid, capno));
     }
 }
 
@@ -606,33 +739,44 @@ void traceTaskMigrate_ (Task       *task,
                         Capability *cap,
                         Capability *new_cap)
 {
+    EventTaskId taskid = serialisableTaskId(task);
+    EventCapNo capno = cap->no;
+    EventCapNo new_capno = new_cap->no;
+
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
-        /* We currently don't do debug tracing of tasks but we must
-           test for TRACE_STDERR because of the !eventlog_enabled case. */
+        traceTaskEvent_stderr(EVENT_TASK_MIGRATE, taskid, capno, new_capno);
     } else
 #endif
     {
-        EventTaskId taskid = serialisableTaskId(task);
-        postTaskMigrateEvent(taskid, cap->no, new_cap->no);
+        postTaskMigrateEvent(taskid, capno, new_capno);
+    }
+
+    if (replay_enabled) {
+        replayEvent(NULL, createTaskMigrateEvent(taskid, capno, new_capno));
     }
 }
 
 void traceTaskDelete_ (Task *task)
 {
+    EventTaskId taskid = serialisableTaskId(task);
+
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
-        debugBelch("task %d deleted\n", task->no);
+        traceTaskEvent_stderr(EVENT_TASK_DELETE, taskid, 0, 0);
     } else
 #endif
     {
-        EventTaskId taskid = serialisableTaskId(task);
         postTaskDeleteEvent(taskid);
+    }
+
+    if (replay_enabled) {
+        replayEvent(NULL, createTaskDeleteEvent(taskid));
     }
 }
 
 #ifdef DEBUG
-static void traceCap_stderr(Capability *cap, char *msg, va_list ap)
+static void traceCap_stderr_ap(Capability *cap, const char *msg, va_list ap)
 {
     ACQUIRE_LOCK(&trace_utx);
 
@@ -643,16 +787,26 @@ static void traceCap_stderr(Capability *cap, char *msg, va_list ap)
 
     RELEASE_LOCK(&trace_utx);
 }
+
+void traceCap_stderr(Capability *cap, const char *msg, ...)
+{
+    va_list ap;
+    va_start(ap,msg);
+
+    traceCap_stderr_ap(cap, msg, ap);
+
+    va_end(ap);
+}
 #endif
 
-void traceCap_(Capability *cap, char *msg, ...)
+void traceCap_(Capability *cap, const char *msg, ...)
 {
     va_list ap;
     va_start(ap,msg);
     
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
-        traceCap_stderr(cap, msg, ap);
+        traceCap_stderr_ap(cap, msg, ap);
     } else
 #endif
     {
@@ -660,10 +814,16 @@ void traceCap_(Capability *cap, char *msg, ...)
     }
 
     va_end(ap);
+
+    if (replay_enabled) {
+        va_start(ap, msg);
+        replayEvent(cap, createMsgEvent(EVENT_LOG_MSG, msg, ap));
+        va_end(ap);
+    }
 }
 
 #ifdef DEBUG
-static void trace_stderr(char *msg, va_list ap)
+static void trace_stderr_ap(const char *msg, va_list ap)
 {
     ACQUIRE_LOCK(&trace_utx);
 
@@ -673,16 +833,26 @@ static void trace_stderr(char *msg, va_list ap)
 
     RELEASE_LOCK(&trace_utx);
 }
+
+void trace_stderr(const char *msg, ...)
+{
+    va_list ap;
+    va_start(ap, msg);
+
+    trace_stderr_ap(msg, ap);
+
+    va_end(ap);
+}
 #endif
 
-void trace_(char *msg, ...)
+void trace_(const char *msg, ...)
 {
     va_list ap;
     va_start(ap,msg);
 
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
-        trace_stderr(msg, ap);
+        trace_stderr_ap(msg, ap);
     } else
 #endif
     {
@@ -690,9 +860,15 @@ void trace_(char *msg, ...)
     }
 
     va_end(ap);
+
+    if (replay_enabled) {
+        va_start(ap, msg);
+        replayEvent(NULL, createMsgEvent(EVENT_LOG_MSG, msg, ap));
+        va_end(ap);
+    }
 }
 
-static void traceFormatUserMsg(Capability *cap, char *msg, ...)
+static void traceFormatUserMsg(Capability *cap, const char *msg, ...)
 {
     va_list ap;
     va_start(ap,msg);
@@ -703,7 +879,7 @@ static void traceFormatUserMsg(Capability *cap, char *msg, ...)
      */
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR && TRACE_user) {
-        traceCap_stderr(cap, msg, ap);
+        traceCap_stderr_ap(cap, msg, ap);
     } else
 #endif
     {
@@ -711,25 +887,31 @@ static void traceFormatUserMsg(Capability *cap, char *msg, ...)
             postUserMsg(cap, msg, ap);
         }
     }
+
+    va_end(ap);
+
     dtraceUserMsg(cap->no, msg);
+
+    if (replay_enabled && TRACE_user) {
+        va_start(ap, msg);
+        replayEvent(cap, createMsgEvent(EVENT_USER_MSG, msg, ap));
+        va_end(ap);
+    }
 }
 
-void traceUserMsg(Capability *cap, char *msg)
+void traceUserMsg(Capability *cap, const char *msg)
 {
     traceFormatUserMsg(cap, "%s", msg);
 }
 
-void traceUserMarker(Capability *cap, char *markername)
+void traceUserMarker(Capability *cap, const char *markername)
 {
     /* Note: traceUserMarker is special since it has no wrapper (it's called
        from cmm code), so we check eventlog_enabled and TRACE_user here.
      */
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR && TRACE_user) {
-        ACQUIRE_LOCK(&trace_utx);
-        tracePreface();
-        debugBelch("cap %d: User marker: %s\n", cap->no, markername);
-        RELEASE_LOCK(&trace_utx);
+        traceCap_stderr(cap, "User marker: %s", markername);
     } else
 #endif
     {
@@ -738,24 +920,42 @@ void traceUserMarker(Capability *cap, char *markername)
         }
     }
     dtraceUserMarker(cap->no, markername);
+
+    if (replay_enabled && TRACE_user) {
+        replayEvent(cap, createUserMarkerEvent(markername));
+    }
 }
 
+#ifdef DEBUG
+void traceThreadLabel_stderr(Capability *cap,
+                             StgTSO     *tso,
+                             const char *label)
+{
+    ACQUIRE_LOCK(&trace_utx);
+
+    tracePreface();
+    debugBelch("cap %d: thread %" FMT_Word " has label %s\n",
+               cap->no, (W_)tso->id, label);
+
+    RELEASE_LOCK(&trace_utx);
+}
+#endif
 
 void traceThreadLabel_(Capability *cap,
                        StgTSO     *tso,
-                       char       *label)
+                       const char *label)
 {
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
-        ACQUIRE_LOCK(&trace_utx);
-        tracePreface();
-        debugBelch("cap %d: thread %" FMT_Word " has label %s\n",
-                   cap->no, (W_)tso->id, label);
-        RELEASE_LOCK(&trace_utx);
+        traceThreadLabel_stderr(cap, tso, label);
     } else
 #endif
     {
         postThreadLabel(cap, tso->id, label);
+    }
+
+    if (replay_enabled) {
+        replayEvent(cap, createThreadLabelEvent(tso, label));
     }
 }
 
@@ -771,14 +971,41 @@ void traceThreadStatus_ (StgTSO *tso USED_IF_DEBUG)
     }
 }
 
+#ifdef DEBUG
+void traceEventStartup_stderr(int nocaps)
+{
+    trace_stderr("Started up with %d capabilities", nocaps);
+}
+#endif
+
 void traceEventStartup_(int nocaps)
 {
-    if (eventlog_enabled) {
-        postEventStartup(nocaps);
+#ifdef DEBUG
+    if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
+        traceEventStartup_stderr(nocaps);
+    } else
+#endif
+    {
+        if (eventlog_enabled) {
+            postEventStartup(nocaps);
+        }
     }
+
+    // already replayed in initReplay
 }
 
 #ifdef REPLAY
+#ifdef DEBUG
+void traceCapAlloc_stderr(Capability *cap,
+                          W_          alloc,
+                          W_          blocks,
+                          W_          hp_alloc)
+{
+    traceCap_stderr(cap, "alloc: %" FMT_Word ", blocks: %" FMT_Word
+                         ", hp_alloc: %" FMT_Word, alloc, blocks, hp_alloc);
+}
+#endif
+
 void traceCapAlloc_(Capability *cap USED_IF_DEBUG,
                     W_          alloc USED_IF_DEBUG,
                     W_          blocks USED_IF_DEBUG,
@@ -786,17 +1013,17 @@ void traceCapAlloc_(Capability *cap USED_IF_DEBUG,
 {
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
-        traceBegin("cap %d: alloc: %" FMT_Word
-                        ", blocks: %" FMT_Word
-                       ", hp_alloc: %" FMT_Word,
-                   cap->no, alloc, blocks, hp_alloc);
-        traceEnd();
+        traceCapAlloc_stderr(cap, alloc, blocks, hp_alloc);
     } else
 #endif
     {
         if (eventlog_enabled) {
             postCapAllocEvent(cap, alloc, blocks, hp_alloc);
         }
+    }
+
+    if (replay_enabled) {
+        replayEvent(cap, createCapAllocEvent(alloc, blocks, hp_alloc));
     }
 }
 #endif

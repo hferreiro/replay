@@ -36,6 +36,7 @@
 #include "Timer.h"
 #include "Globals.h"
 #include "FileLock.h"
+#include "Replay.h"
 void exitLinker( void );	// there is no Linker.h file to include
 
 #if defined(PROFILING)
@@ -162,20 +163,28 @@ hs_init_ghc(int *argc, char **argv[], RtsConfig rts_config)
                       rts_config.rts_opts_enabled, rts_config.rts_opts, rts_config.rts_hs_main);
     }
 
-    /* Initialise the stats department, phase 1 */
-    initStats1();
-
 #ifdef USE_PAPI
     papi_init();
 #endif
+
+    /* before any subsystem requiring flags */
+    initReplay();
 
     /* initTracing must be after setupRtsFlags() */
 #ifdef TRACING
     initTracing();
 #endif
+
     /* Trace the startup event
      */
     traceEventStartup();
+
+    /* flags and env event need to happen early to setup the original flags */
+    traceOSProcessInfo();
+
+    /* Initialise the stats department, phase 1 */
+    /* after setting flags in replay            */
+    initStats1();
 
     /* initialise scheduler data structures (needs to be done before
      * initStorage()).
@@ -184,7 +193,6 @@ hs_init_ghc(int *argc, char **argv[], RtsConfig rts_config)
 
     /* Trace some basic information about the process */
     traceWallClockTime();
-    traceOSProcessInfo();
 
     /* initialize the storage manager */
     initStorage();
@@ -259,7 +267,7 @@ hs_init_ghc(int *argc, char **argv[], RtsConfig rts_config)
 
     // ditto.
 #if defined(THREADED_RTS)
-    ioManagerStart();
+    //ioManagerStart();
 #endif
 
     /* Record initialization times */
@@ -410,6 +418,8 @@ hs_exit_(rtsBool wait_foreign)
     endTracing();
     freeTracing();
 #endif
+
+    endReplay();
 
 #if defined(TICKY_TICKY)
     if (RtsFlags.TickyFlags.showTickyStats) PrintTickyInfo();

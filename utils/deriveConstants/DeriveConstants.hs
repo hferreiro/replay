@@ -342,13 +342,15 @@ wanteds = concat
           ,defIntOffset Both "stgGCEnter1" "FUN_OFFSET(stgGCEnter1)"
           ,defIntOffset Both "stgGCFun"    "FUN_OFFSET(stgGCFun)"
 
-          ,fieldOffset Both "Capability" "r"
-          ,fieldOffset C    "Capability" "lock"
-          ,structField C    "Capability" "no"
-          ,structField C    "Capability" "mut_lists"
-          ,structField C    "Capability" "context_switch"
-          ,structField C    "Capability" "interrupt"
-          ,structField C    "Capability" "sparks"
+          ,fieldOffset Both  "Capability" "r"
+          ,fieldOffset C     "Capability" "lock"
+          ,structField C     "Capability" "no"
+          ,structField C     "Capability" "mut_lists"
+          ,structField C     "Capability" "context_switch"
+          ,structField C     "Capability" "interrupt"
+          ,structField C     "Capability" "sparks"
+          ,structField_ Both "Capability_replay_hp" "Capability" "replay.hp"
+          ,structField_ Both "Capability_replay_bd" "Capability" "replay.bd"
 
           ,structField Both "bdescr" "start"
           ,structField Both "bdescr" "free"
@@ -654,6 +656,7 @@ getWanted verbose tmpdir gccProgram gccFlags nmProgram
                      "",
                      "#define PROFILING",
                      "#define THREADED_RTS",
+                     "#define REPLAY",
                      "",
                      "#include \"PosixSource.h\"",
                      "#include \"Rts.h\"",
