@@ -12,8 +12,7 @@
 #include "BeginPrivate.h"
 
 #include "rts/EventLogFormat.h"
-
-#ifdef REPLAY
+#include "Sparks.h"
 
 typedef struct _EventHeader {
     EventTypeNum   tag;
@@ -24,6 +23,8 @@ typedef struct _Event {
     EventHeader header;
     void       *payload[FLEXIBLE_ARRAY];
 } Event;
+
+#ifdef REPLAY
 
 typedef struct _CapEvent {
     EventCapNo  capno;
@@ -224,6 +225,58 @@ typedef struct _EventCapAlloc {
     StgWord64   blocks;
     StgWord64   hp_alloc;
 } EventCapAlloc;
+
+rtsBool isVariableSizeEvent(EventTypeNum tag);
+int eventSize(Event *ev);
+void printEvent(Capability *cap, Event *ev);
+
+Event *createEvent(EventTypeNum tag);
+Event *createSchedEvent(EventTypeNum tag,
+                        StgTSO      *tso,
+                        StgWord      info1,
+                        StgWord      info2);
+Event *createStartupEvent(EventCapNo nocaps);
+Event *createGcEvent(EventTypeNum tag);
+Event *createHeapEvent(EventTypeNum  tag,
+                       EventCapsetID heap_capset,
+                       lnat          info1);
+Event *createHeapInfoEvent(EventCapsetID heap_capset,
+                           nat           gens,
+                           W_            maxHeapSize,
+                           W_            allocAreaSize,
+                           W_            mblockSize,
+                           W_            blockSize);
+Event *createGcStatsEvent(EventCapsetID heap_capset,
+                          nat           gen,
+                          W_            copied,
+                          W_            slop,
+                          W_            fragmentation,
+                          nat           par_n_threads,
+                          W_            par_max_copied,
+                          W_            par_tot_copied);
+Event *createCapEvent(EventTypeNum tag, EventCapNo capno);
+Event *createCapsetEvent(EventTypeNum tag,
+                         EventCapsetID capset,
+                         StgWord info);
+Event *createWallClockTimeEvent(EventCapsetID capset);
+Event *createCapsetStrEvent(EventTypeNum  tag,
+                            EventCapsetID capset,
+                            const char   *msg);
+Event *createCapsetVecEvent(EventTypeNum  tag,
+                            EventCapsetID capset,
+                            int           argc,
+                            const char   *argv[]);
+Event *createSparkEvent(EventTypeNum tag, StgWord info1);
+Event *createSparkCountersEvent(SparkCounters counters,
+                                StgWord remaining);
+Event *createMsgEvent(EventTypeNum type, const char *msg, va_list ap);
+Event *createThreadLabelEvent(StgTSO *tso, const char *label);
+Event *createTaskCreateEvent(EventTaskId taskId, EventCapNo capno);
+Event *createTaskMigrateEvent(EventTaskId taskId, EventCapNo capno,
+                              EventCapNo new_capno);
+Event *createTaskDeleteEvent(EventTaskId taskId);
+Event *createUserMarkerEvent(const char *markername);
+Event *createCapAllocEvent(W_ alloc, W_ blocks, W_ hpAlloc);
 
 #endif
 

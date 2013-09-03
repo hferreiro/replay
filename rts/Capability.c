@@ -239,6 +239,14 @@ initCapability( Capability *cap, nat i )
     cap->run_queue_hd      = END_TSO_QUEUE;
     cap->run_queue_tl      = END_TSO_QUEUE;
 
+    cap->replay.hp         = NULL;
+    cap->replay.bd         = NULL;
+    cap->replay.last_hp    = NULL;
+    cap->replay.last_bd    = NULL;
+    cap->replay.alloc      = 0;
+    cap->replay.real_alloc = 0;
+    cap->replay.blocks     = 0;
+
 #if defined(THREADED_RTS)
     initMutex(&cap->lock);
     cap->running_task      = NULL; // indicates cap is free
@@ -255,13 +263,6 @@ initCapability( Capability *cap, nat i )
     cap->spark_stats.converted  = 0;
     cap->spark_stats.gcd        = 0;
     cap->spark_stats.fizzled    = 0;
-#if defined(REPLAY)
-    cap->replay.last_hp    = NULL;
-    cap->replay.last_bd    = NULL;
-    cap->replay.alloc      = 0;
-    cap->replay.real_alloc = 0;
-    cap->replay.blocks     = 0;
-#endif
 #endif
     cap->total_allocated        = 0;
 

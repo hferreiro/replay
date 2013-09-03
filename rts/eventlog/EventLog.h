@@ -21,7 +21,7 @@
 /*
  * Descriptions of EventTags for events.
  */
-extern char *EventTagDesc[];
+extern const char *EventDesc[];
 
 void initEventLogging(void);
 void endEventLogging(void);
@@ -30,6 +30,7 @@ void abortEventLogging(void); // #4512 - after fork child needs to abort
 void flushEventLog(void);     // event log inherited from parent
 void moreCapEventBufs (nat from, nat to);
 
+#ifdef REPLAY
 void initEventLoggingReplay(void);
 void endEventLoggingReplay(void);
 void moreCapEventBufsReplay(nat from, nat to);
@@ -38,6 +39,11 @@ CapEvent *peekEvent(nat n);
 CapEvent *readEvent(void);
 CapEvent *nextEvent(void);
 void freeEvent(CapEvent *ce);
+#endif
+
+INLINE_HEADER StgWord64 time_ns(void)
+{ return TimeToNS(stat_getElapsedTime()); }
+
 
 /*
  * Post a scheduler event to the capability's event buffer (an event
@@ -54,13 +60,13 @@ void postEvent(Capability *cap, EventTypeNum tag);
 void postEventAtTimestamp (Capability *cap, EventTimestamp ts,
                            EventTypeNum tag);
 
-void postMsg(char *msg, va_list ap);
+void postMsg(const char *msg, va_list ap);
 
-void postUserMsg(Capability *cap, char *msg, va_list ap);
+void postUserMsg(Capability *cap, const char *msg, va_list ap);
 
-void postCapMsg(Capability *cap, char *msg, va_list ap);
+void postCapMsg(Capability *cap, const char *msg, va_list ap);
 
-void postUserMarker(Capability *cap, char *markername);
+void postUserMarker(Capability *cap, const char *markername);
 
 void postEventStartup(EventCapNo n_caps);
 
@@ -82,7 +88,7 @@ void postCapsetEvent (EventTypeNum tag,
  */
 void postCapsetStrEvent (EventTypeNum tag,
                          EventCapsetID capset,
-                         char *msg);
+                         const char *msg);
 
 /*
  * Post a capability set event with several strings payload
@@ -90,7 +96,7 @@ void postCapsetStrEvent (EventTypeNum tag,
 void postCapsetVecEvent (EventTypeNum tag,
                          EventCapsetID capset,
                          int argc,
-                         char *msg[]);
+                         const char *msg[]);
 
 void postWallClockTime (EventCapsetID capset);
 
@@ -111,7 +117,7 @@ void postSparkCountersEvent (Capability *cap,
  */
 void postThreadLabel(Capability    *cap,
                      EventThreadID  id,
-                     char          *label);
+                     const char    *label);
 
 /*
  * Various GC and heap events
@@ -166,19 +172,19 @@ INLINE_HEADER void postEvent (Capability *cap  STG_UNUSED,
                               EventTypeNum tag STG_UNUSED)
 { /* nothing */ }
 
-INLINE_HEADER void postMsg (char *msg STG_UNUSED,
+INLINE_HEADER void postMsg (const char *msg STG_UNUSED,
                             va_list ap STG_UNUSED)
 { /* nothing */ }
 
 INLINE_HEADER void postCapMsg (Capability *cap STG_UNUSED,
-                               char *msg STG_UNUSED,
+                               const char *msg STG_UNUSED,
                                va_list ap STG_UNUSED)
 { /* nothing */ }
 
 
 INLINE_HEADER void postThreadLabel(Capability    *cap   STG_UNUSED,
                                    EventThreadID  id    STG_UNUSED,
-                                   char          *label STG_UNUSED)
+                                   const char    *label STG_UNUSED)
 { /* nothing */ }
 
 #endif

@@ -135,6 +135,10 @@ struct TRACE_FLAGS {
     rtsBool user;           /* trace user events (emitted from Haskell code) */
 };
 
+struct REPLAY_FLAGS {
+    rtsBool replay;
+};
+
 struct CONCURRENT_FLAGS {
     Time ctxtSwitchTime;         /* units: TIME_RESOLUTION */
     int ctxtSwitchTicks;         /* derived */
@@ -221,6 +225,7 @@ typedef struct _RTS_FLAGS {
     struct COST_CENTRE_FLAGS CcFlags;
     struct PROFILING_FLAGS   ProfFlags;
     struct TRACE_FLAGS       TraceFlags;
+    struct REPLAY_FLAGS      ReplayFlags;
     struct TICKY_FLAGS	     TickyFlags;
 
 #if defined(THREADED_RTS)
