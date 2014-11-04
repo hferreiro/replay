@@ -54,3 +54,92 @@
 	path = libraries/random
 	url = http://git.haskell.org/packages/random.git
 	ignore = untracked
+
+[submodule "libffi-tarballs"]
+	path = libffi-tarballs
+	url = http://git.haskell.org/libffi-tarballs.git
+	ignore = untracked
+[submodule "libraries/array"]
+	path = libraries/array
+	url = http://git.haskell.org/packages/array.git
+	ignore = untracked
+[submodule "libraries/base"]
+	path = libraries/base
+	url = http://git.haskell.org/packages/base.git
+	ignore = untracked
+[submodule "libraries/deepseq"]
+	path = libraries/deepseq
+	url = http://git.haskell.org/packages/deepseq.git
+	ignore = untracked
+[submodule "libraries/directory"]
+	path = libraries/directory
+	url = http://git.haskell.org/packages/directory.git
+	ignore = untracked
+[submodule "libraries/filepath"]
+	path = libraries/filepath
+	url = http://git.haskell.org/packages/filepath.git
+	ignore = untracked
+[submodule "libraries/ghc-prim"]
+	path = libraries/ghc-prim
+	url = http://git.haskell.org/packages/ghc-prim.git
+	ignore = untracked
+[submodule "libraries/haskell98"]
+	path = libraries/haskell98
+	url = http://git.haskell.org/packages/haskell98.git
+	ignore = untracked
+[submodule "libraries/haskell2010"]
+	path = libraries/haskell2010
+	url = http://git.haskell.org/packages/haskell2010.git
+	ignore = untracked
+[submodule "libraries/hoopl"]
+	path = libraries/hoopl
+	url = http://git.haskell.org/packages/hoopl.git
+	ignore = untracked
+[submodule "libraries/hpc"]
+	path = libraries/hpc
+	url = http://git.haskell.org/packages/hpc.git
+	ignore = untracked
+[submodule "libraries/integer-gmp"]
+	path = libraries/integer-gmp
+	url = http://git.haskell.org/packages/integer-gmp.git
+	ignore = untracked
+[submodule "libraries/integer-simple"]
+	path = libraries/integer-simple
+	url = http://git.haskell.org/packages/integer-simple.git
+	ignore = untracked
+[submodule "libraries/old-locale"]
+	path = libraries/old-locale
+	url = http://git.haskell.org/packages/old-locale.git
+	ignore = untracked
+[submodule "libraries/old-time"]
+	path = libraries/old-time
+	url = http://git.haskell.org/packages/old-time.git
+	ignore = untracked
+[submodule "libraries/process"]
+	path = libraries/process
+	url = http://git.haskell.org/packages/process.git
+	ignore = untracked
+[submodule "libraries/template-haskell"]
+	path = libraries/template-haskell
+	url = http://git.haskell.org/packages/template-haskell.git
+	ignore = untracked
+[submodule "libraries/parallel"]
+	path = libraries/parallel
+	url = http://git.haskell.org/packages/parallel.git
+	ignore = untracked
+[submodule "utils/hsc2hs"]
+	path = utils/hsc2hs
+	url = http://git.haskell.org/hsc2hs.git
+	ignore = untracked
+[submodule "utils/haddock"]
+	path = utils/haddock
+	url = http://git.haskell.org/haddock.git
+	ignore = untracked
+[submodule "nofib"]
+	path = nofib
+	url = http://git.haskell.org/nofib.git
+	ignore = untracked
+[submodule "libraries/unix"]
+	path = libraries/unix
+	url = http://git.haskell.org/packages/unix.git
+	ignore = untracked
