@@ -265,6 +265,7 @@ schedule (Capability *initialCapability, Task *task)
 	break;
     case SCHED_INTERRUPTING:
 	debugTrace(DEBUG_sched, "task %d: SCHED_INTERRUPTING", task->no);
+	debugReplay("task %d: SCHED_INTERRUPTING\n", task->no);
 #if defined(REPLAY) && defined(THREADED_RTS)
         traceCapValue(cap, SCHED_LOOP, SCHED_INTERRUPTING);
 #endif
@@ -285,6 +286,7 @@ schedule (Capability *initialCapability, Task *task)
 
     case SCHED_SHUTTING_DOWN:
 	debugTrace(DEBUG_sched, "task %d: SCHED_SHUTTING_DOWN", task->no);
+	debugReplay("task %d: SCHED_SHUTTING_DOWN\n", task->no);
 #if defined(REPLAY) && defined(THREADED_RTS)
         traceCapValue(cap, SCHED_LOOP, SCHED_SHUTTING_DOWN);
 #endif
@@ -292,6 +294,7 @@ schedule (Capability *initialCapability, Task *task)
 	// then we will exit below when we've removed our TSO from
 	// the run queue.
 	if (!isBoundTask(task) && emptyRunQueue(cap)) {
+            debugReplay("task %d is worker, exiting\n", task->no);
 	    return cap;
 	}
 	break;
@@ -510,6 +513,7 @@ run_thread:
 	cap = regTableToCapability(r);
 	ret = r->rRet;
         ASSERT(cap_no == cap->no);
+
 	break;
     }
     
@@ -551,6 +555,20 @@ run_thread:
 
     ASSERT_FULL_CAPABILITY_INVARIANTS(cap,task);
     ASSERT(t->cap == cap);
+
+//XXX
+//#ifdef REPLAY
+//#define START(bd)       ((bd)->start - 1)
+//#define START_FREE(bd)  ((bd)->free - 1) // last written word
+//#define END(bd)         (START(bd) + (bd)->blocks * BLOCK_SIZE_W) // last writable word
+//#define FREE(bd)    (END(bd) - START_FREE(bd))
+//#define SLOP(bd)    FREE(bd)
+//        if (cap->r.rHpAlloc == 0 && cap->r.rCurrentNursery->u.back) {
+//            traceCap(TRACE_sched, cap, "slop u.back = %" FMT_Word "\n", SLOP(cap->r.rCurrentNursery->u.back));
+//        } else {
+//            traceCap(TRACE_sched, cap, "slop = %" FMT_Word "\n", SLOP(cap->r.rCurrentNursery));
+//        }
+//#endif
 
     // ----------------------------------------------------------------------
     
@@ -709,6 +727,8 @@ scheduleYield (Capability **pcap, Task *task)
     Capability *cap = *pcap;
     int didGcLast = rtsFalse;
 
+    debugReplay("cap %d: task %d: scheduleYield\n", cap->no, task->no);
+
 #ifdef REPLAY
     if (replay_enabled) {
         replayYield(pcap, task);
@@ -755,6 +775,8 @@ schedulePushWork(Capability *cap USED_IF_THREADS,
 
     Capability *free_caps[n_capabilities], *cap0;
     nat i, n_free_caps;
+
+    debugReplay("cap %d: task %d: schedulePushWork\n", cap->no, task->no);
 
     // migration can be turned off with +RTS -qm
     if (!RtsFlags.ParFlags.migrate) return;
@@ -846,7 +868,10 @@ schedulePushWork(Capability *cap USED_IF_THREADS,
 
                     traceEventMigrateThread (cap, t, free_caps[i]->no);
 
-		    if (t->bound) { t->bound->task->cap = free_caps[i]; }
+		    if (t->bound) {
+                        debugReplay("Assigning cap %d to task %d\n", free_caps[i]->no, t->bound->task->no);
+                        t->bound->task->cap = free_caps[i];
+                    }
 		    t->cap = free_caps[i];
 		    i++;
 		}
@@ -968,6 +993,7 @@ scheduleDetectDeadlock (Capability **pcap, Task *task)
 	 */
 	if (recent_activity != ACTIVITY_INACTIVE) return;
 #endif
+        debugReplay("cap %d: task %d: scheduleDetectDeadlock\n", cap->no, task->no);
 
 	debugTrace(DEBUG_sched, "deadlocked, forcing major GC...");
 
@@ -1065,6 +1091,8 @@ scheduleProcessInbox (Capability **pcap USED_IF_THREADS)
     int r;
     Capability *cap = *pcap;
 
+    debugReplay("cap %d: task %d scheduleProcessInbox\n", cap->no, myTask()->no);
+
 #ifdef REPLAY
     if (replay_enabled) {
         replayProcessInbox(pcap);
@@ -1137,6 +1165,9 @@ scheduleActivateSpark(Capability *cap)
 
     if (anySparks() && !cap->disabled)
     {
+        debugReplay("cap %d: task %d: scheduleActivateSpark\n",
+                    cap->no, cap->running_task->no);
+
         createSparkThread(cap);
         debugTrace(DEBUG_sched, "creating a spark thread");
     }
@@ -1481,6 +1512,8 @@ static nat requestSync (Capability **pcap, Task *task, nat sync_type)
 {
     nat prev_pending_sync;
 
+    debugReplay("cap %d: task %d: requestSync\n", (*pcap)->no, task->no);
+
     prev_pending_sync = cas(&pending_sync, 0, sync_type);
 
     if (prev_pending_sync)
@@ -1561,6 +1594,8 @@ scheduleDoGC (Capability **pcap, Task *task USED_IF_THREADS,
     nat i, sync;
     StgTSO *tso;
 #endif
+
+    debugReplay("cap %d: task %d: scheduleDoGC\n", cap->no, task->no);
 
     if (sched_state == SCHED_SHUTTING_DOWN) {
         // The final GC has already been done, and the system is
@@ -1758,6 +1793,7 @@ delete_threads_and_gc:
         }
 #endif
         sched_state = SCHED_SHUTTING_DOWN;
+        debugReplay("task %d: SCHED_SHUTTING_DOWN\n", task->no);
     }
     
     /*
@@ -2346,7 +2382,7 @@ suspendThread (StgRegTable *reg, rtsBool interruptible)
   task = cap->running_task;
   tso = cap->r.rCurrentTSO;
 
-  replayPrint("THREAD_SUSPENDED_FOREIGN_CALL\n");
+  debugReplay("THREAD_SUSPENDED_FOREIGN_CALL %" FMT_Word "\n", (W_)tso->id);
 
   traceEventStopThread(cap, tso, THREAD_SUSPENDED_FOREIGN_CALL, 0);
 
@@ -2430,7 +2466,7 @@ resumeThread (void *task_)
     incall->suspended_cap = NULL;
     tso->_link = END_TSO_QUEUE; // no write barrier reqd
 
-    replayPrint("resumeThread\n");
+    debugReplay("resumeThread task %d thread %" FMT_Word "\n", task->no, (W_)tso->id);
 
     traceEventRunThread(cap, tso);
     
@@ -2649,6 +2685,8 @@ exitScheduler (rtsBool wait_foreign USED_IF_THREADS)
 
     task = newBoundTask();
 
+    debugReplay("task %d: exitScheduler\n", task->no);
+
 #if defined(REPLAY) && defined(THREADED_RTS)
     if (replay_enabled) {
         replayExitScheduler(task);
@@ -2659,6 +2697,7 @@ exitScheduler (rtsBool wait_foreign USED_IF_THREADS)
     // If we haven't killed all the threads yet, do it now.
     if (sched_state < SCHED_SHUTTING_DOWN) {
 	sched_state = SCHED_INTERRUPTING;
+        debugReplay("task %d: SCHED_INTERRUPTING\n", task->no);
         Capability *cap = task->cap;
         waitForReturnCapability(&cap,task);
         scheduleDoGC(&cap,task,rtsTrue);
@@ -2672,6 +2711,7 @@ exitScheduler (rtsBool wait_foreign USED_IF_THREADS)
         releaseCapability(cap, cap);
     }
     sched_state = SCHED_SHUTTING_DOWN;
+    debugReplay("task %d: SCHED_SHUTTING_DOWN\n", task->no);
 
     shutdownCapabilities(task, wait_foreign);
 

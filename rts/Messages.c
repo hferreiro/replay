@@ -90,6 +90,8 @@ executeMessage (Capability *cap, Message *m)
 {
     const StgInfoTable *i;
 
+    debugReplay("cap %d: task %d: executeMessage\n", cap->no, cap->running_task->no);
+
 loop:
     write_barrier(); // allow m->header to be modified by another thread
     i = m->header.info;
@@ -189,6 +191,9 @@ nat messageBlackHole(Capability *cap, MessageBlackHole *msg)
     StgClosure *bh = UNTAG_CLOSURE(msg->bh);
     StgTSO *owner;
 
+    debugReplay("cap %d: task %d: messageBlackHole: thread %d blocking on blackhole %p\n",
+                cap->no, cap->running_task->no, msg->tso->id, msg->bh);
+
     debugTraceCap(DEBUG_sched, cap, "message: thread %d blocking on blackhole %p", 
                   (W_)msg->tso->id, msg->bh);
 
@@ -232,6 +237,8 @@ loop:
 
 #ifdef THREADED_RTS
         if (owner->cap != cap) {
+            debugReplay("cap %d: task %d: first blocked on blackhole %p\n",
+                        cap->no, cap->running_task->no, bh);
             sendMessage(cap, owner->cap, (Message*)msg);
             debugTraceCap(DEBUG_sched, cap, "forwarding message to cap %d", owner->cap->no);
             return 1;
@@ -240,6 +247,8 @@ loop:
         // owner is the owner of the BLACKHOLE, and resides on this
         // Capability.  msg->tso is the first thread to block on this
         // BLACKHOLE, so we first create a BLOCKING_QUEUE object.
+        debugReplay("cap %d: task %d: creating blocking queue for blackhole %p\n",
+                    cap->no, cap->running_task->no, bh);
 
         bq = (StgBlockingQueue*)allocate(cap, sizeofW(StgBlockingQueue));
             
@@ -295,11 +304,16 @@ loop:
 
 #ifdef THREADED_RTS
         if (owner->cap != cap) {
+            debugReplay("cap %d: task %d: next blocked on blackhole %p\n",
+                        cap->no, cap->running_task->no, bh);
             sendMessage(cap, owner->cap, (Message*)msg);
             debugTraceCap(DEBUG_sched, cap, "forwarding message to cap %d", owner->cap->no);
             return 1;
         }
 #endif
+
+        debugReplay("cap %d: task %d: adding to blocking queue for blackhole %p\n",
+                    cap->no, cap->running_task->no, bh);
 
         msg->link = bq->queue;
         bq->queue = msg;

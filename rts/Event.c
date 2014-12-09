@@ -185,7 +185,11 @@ printEvent(Capability *cap USED_IF_DEBUG, Event *ev)
     nat tag;
 
     tag = ev->header.tag;
+    debugReplay("%" FMT_Word64 " event '%s' task %d\n",
+                ev->header.time, EventDesc[tag],
+                all_tasks && myTask() ? (int)myTask()->no : -1);
 #ifdef DEBUG
+    if (!replay_enabled) return;
     switch (tag) {
     case EVENT_CREATE_THREAD:
     case EVENT_RUN_THREAD:
@@ -288,7 +292,7 @@ printEvent(Capability *cap USED_IF_DEBUG, Event *ev)
     case EVENT_GC_STATS_GHC:
     {
         // TODO: unimplemented
-        debugBelch("\n");
+        debugReplay("\n");
         break;
     }
     case EVENT_SPARK_CREATE:
@@ -388,8 +392,6 @@ printEvent(Capability *cap USED_IF_DEBUG, Event *ev)
     default:
         barf("printEvent: unknown event tag %d", tag);
     }
-#else
-    debugBelch("%s\n", EventDesc[tag]);
 #endif
 }
 

@@ -89,6 +89,8 @@ findSpark (Capability *cap)
   rtsBool retry;
   nat i = 0;
 
+  debugReplay("cap %d: task %d: findSpark\n", cap->no, cap->running_task->no);
+
 #ifdef REPLAY
   if (replay_enabled) {
       return replayFindSpark(cap);
@@ -116,6 +118,8 @@ findSpark (Capability *cap)
           cap->spark_stats.fizzled++;
 #ifdef REPLAY
           if (TRACE_spark_full) {
+              debugReplay("cap %d: task %d: spark %p fizzled\n",
+                          cap->no, cap->running_task->no, spark);
               replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
           }
 #else
@@ -129,6 +133,8 @@ findSpark (Capability *cap)
           // Post event for running a spark from capability's own pool.
 #ifdef REPLAY
           if (TRACE_spark_full) {
+              debugReplay("cap %d: task %d: run spark %p\n",
+                          cap->no, cap->running_task->no, spark);
               replayTraceCapValue(cap, SPARK_RUN, (W_)spark);
           }
 #else
@@ -162,6 +168,8 @@ findSpark (Capability *cap)
               cap->spark_stats.fizzled++;
 #ifdef REPLAY
               if (TRACE_spark_full) {
+                  debugReplay("cap %d: task %d: spark %p fizzled from cap %d\n",
+                              cap->no, cap->running_task->no, spark, robbed->no);
                   replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
               }
 #else
@@ -179,6 +187,8 @@ findSpark (Capability *cap)
               cap->spark_stats.converted++;
 #ifdef REPLAY
               if (TRACE_spark_full) {
+                  debugReplay("cap %d: task %d: spark %p stolen from cap %d\n",
+                              cap->no, cap->running_task->no, spark, robbed->no);
                   replayTraceCapValue(cap, SPARK_STEAL, (W_)spark);
               }
 #else
@@ -497,6 +507,8 @@ releaseCapability_ (Capability *from,
 
     task = cap->running_task;
 
+    debugReplay("cap %d: task %d: releaseCapability_\n", from->no, task->no);
+
     ASSERT_PARTIAL_CAPABILITY_INVARIANTS(cap,task);
 
 #ifdef REPLAY
@@ -577,6 +589,8 @@ releaseCapability (Capability *from USED_IF_THREADS,
 
     task = cap->running_task;
 
+    debugReplay("cap %d: task %d: releaseCapability\n", from->no, task->no);
+
 #ifdef REPLAY
     if (replay_enabled) {
         replayReleaseCapability(from, cap);
@@ -601,7 +615,7 @@ releaseAndWakeupCapability (Capability *from USED_IF_THREADS,
     task = cap->running_task;
 
 #ifdef DEBUG
-    debugBelch("cap %d: task %d: releaseAndWakeupCapability\n", from->no, task->no);
+    debugReplay("cap %d: task %d: releaseAndWakeupCapability\n", from->no, task->no);
 #endif
 
 #ifdef REPLAY
@@ -627,6 +641,8 @@ releaseCapabilityAndQueueWorker (Capability* cap USED_IF_THREADS)
     ACQUIRE_LOCK(&cap->lock);
 
     task = cap->running_task;
+
+    debugReplay("cap %d: task %d: releaseCapabilityAndQueueWorker\n", cap->no, task->no);
 
 #ifdef REPLAY
     if (replay_enabled) {
@@ -698,6 +714,8 @@ waitForReturnCapability (Capability **pCap, Task *task)
     *pCap = &MainCapability;
 
 #else
+    debugReplay("cap %d: task %d: waitForReturnCapability\n", *pCap ? (int)(*pCap)->no : -1, task->no);
+
 #if defined(REPLAY)
     if (replay_enabled) {
         replayWaitForReturnCapability(pCap, task);
@@ -803,6 +821,8 @@ rtsBool /* Did we GC? */
 yieldCapability (Capability** pCap, Task *task, rtsBool gcAllowed)
 {
     Capability *cap = *pCap;
+
+    debugReplay("cap %d: task %d: yieldCapability\n", cap->no, task->no);
 
 #ifdef REPLAY
     if (replay_enabled) {
@@ -946,6 +966,8 @@ prodCapability (Capability *cap, Task *task)
 rtsBool
 tryGrabCapability (Capability *cap, Task *task)
 {
+    debugReplay("cap %d: task %d: tryGrabCapability %d\n", task->cap->no, task->no, cap->no);
+
 #ifdef REPLAY
     if (replay_enabled) {
         return replayTryGrabCapability(cap, task);
@@ -992,6 +1014,8 @@ shutdownCapability (Capability *cap USED_IF_THREADS,
 {
 #if defined(THREADED_RTS)
     nat i;
+
+    debugReplay("cap %d: task %d: shutdownCapability\n", cap->no, task->no);
 
     task->cap = cap;
 
