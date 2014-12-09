@@ -656,6 +656,9 @@ loop:
               || i == &stg_BLOCKING_QUEUE_CLEAN_info
               || i == &stg_BLOCKING_QUEUE_DIRTY_info) {
               copy(p,info,q,sizeofW(StgInd),gen_no);
+              //debugReplay("blackhole %p pointing to %p is now %p\n",
+              //            (void *)((W_)q & 0x0fffff), (void *)((W_)r & 0x0fffff),
+              //            (void *)((W_)UNTAG_CLOSURE(*p) & 0x0fffff));
               return;
           }
           ASSERT(i != &stg_IND_info);

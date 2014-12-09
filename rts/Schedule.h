@@ -135,6 +135,8 @@ EXTERN_INLINE void
 appendToRunQueue (Capability *cap, StgTSO *tso)
 {
     ASSERT(tso->_link == END_TSO_QUEUE);
+    debugReplay("cap %d: task %d: appended thread %" FMT_Word " on run queue\n",
+                cap->no, cap->running_task->no, (W_)tso->id);
     if (cap->run_queue_hd == END_TSO_QUEUE) {
 	cap->run_queue_hd = tso;
         tso->block_info.prev = END_TSO_QUEUE;
@@ -154,6 +156,8 @@ pushOnRunQueue (Capability *cap, StgTSO *tso);
 EXTERN_INLINE void
 pushOnRunQueue (Capability *cap, StgTSO *tso)
 {
+    debugReplay("cap %d: task %d: pushed thread %" FMT_Word " on run queue\n",
+                cap->no, cap->running_task->no, (W_)tso->id);
     setTSOLink(cap, tso, cap->run_queue_hd);
     tso->block_info.prev = END_TSO_QUEUE;
     if (cap->run_queue_hd != END_TSO_QUEUE) {
@@ -172,6 +176,8 @@ popRunQueue (Capability *cap)
 { 
     StgTSO *t = cap->run_queue_hd;
     ASSERT(t != END_TSO_QUEUE);
+    debugReplay("cap %d: task %d: popped thread %" FMT_Word " on run queue\n",
+                cap->no, cap->running_task->no, (W_)t->id);
     cap->run_queue_hd = t->_link;
     if (t->_link != END_TSO_QUEUE) {
         t->_link->block_info.prev = END_TSO_QUEUE;

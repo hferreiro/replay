@@ -348,7 +348,9 @@ calcTotalAllocated(void)
     for (n = 0; n < n_capabilities; n++) {
 #ifdef REPLAY
         if (eventlog_enabled || replay_enabled) {
-            ASSERT(capabilities[n]->replay.real_alloc == capabilities[n]->total_allocated);
+            ASSERTM(capabilities[n]->replay.real_alloc == capabilities[n]->total_allocated,
+                    "\nreal_alloc  = %" FMT_SizeT "\ntotal_alloc = %" FMT_SizeT,
+                    capabilities[n]->replay.real_alloc, capabilities[n]->total_allocated);
         }
 #endif
         tot_alloc += capabilities[n]->total_allocated;

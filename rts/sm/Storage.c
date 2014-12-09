@@ -344,6 +344,9 @@ lockCAF (StgRegTable *reg, StgIndStatic *caf)
     Capability *cap = regTableToCapability(reg);
     StgInd *bh;
 
+    debugReplay("cap %d: task %d: lockCAF\n",
+                cap->no, cap->running_task->no);
+
     orig_info = caf->header.info;
 
 #ifdef THREADED_RTS
@@ -388,8 +391,17 @@ newCAF(StgRegTable *reg, StgIndStatic *caf)
 {
     StgInd *bh;
 
+    debugReplay("cap %d: task %d: newCAF\n",
+                regTableToCapability(reg)->no,
+                regTableToCapability(reg)->running_task->no);
+
     bh = lockCAF(reg, caf);
     if (!bh) return NULL;
+
+    debugReplay("cap %d: task %d: newCAF %p success\n",
+                regTableToCapability(reg)->no,
+                regTableToCapability(reg)->running_task->no,
+                (void *)((W_)bh & 0x0fffff));
 
     if(keepCAFs)
     {
@@ -682,6 +694,11 @@ StgPtr allocate (Capability *cap, W_ n)
     bdescr *bd;
     StgPtr p;
 
+#ifdef DEBUG
+    debugReplay("cap %d: task %d: allocate %" FMT_Word "\n",
+                cap->no, cap->running_task->no, n);
+#endif
+
     TICK_ALLOC_HEAP_NOCTR(WDS(n));
     CCS_ALLOC(cap->r.rCCCS,n);
     
@@ -783,7 +800,8 @@ StgPtr allocate (Capability *cap, W_ n)
                 if (replay_enabled) {
                     barf("bd %p is replay.last_bd\n", (StgPtr)((W_)bd & 0x0fffff));
                 } else {
-                    debugBelch("bd %p is replay.last_bd\n", (StgPtr)((W_)bd & 0x0fffff));
+                    debugReplay("cap %d: bd %p is replay.last_bd\n",
+                                cap->no, (StgPtr)((W_)bd & 0x0fffff));
                 }
             }
 #endif
@@ -792,6 +810,8 @@ StgPtr allocate (Capability *cap, W_ n)
                 bd->link->u.back = cap->r.rCurrentNursery;
             }
 #ifdef REPLAY
+            debugReplay("cap %d: tail bd %p from nursery enqueued\n",
+                        cap->no, (StgPtr)((W_)bd & 0x0fffff));
             // Emit an event so that that stealing this block will not
             // interfere with the allocation calculations to stop the thread
             // at replay time. It can be called from createThread() from the
@@ -844,6 +864,11 @@ allocatePinned (Capability *cap, W_ n)
 {
     StgPtr p;
     bdescr *bd;
+
+#ifdef DEBUG
+    debugReplay("cap %d: task %d: allocatePinned %" FMT_Word "\n",
+                cap->no, cap->running_task->no, n);
+#endif
 
     // If the request is for a large object, then allocate()
     // will give us a pinned object anyway.
@@ -908,7 +933,8 @@ allocatePinned (Capability *cap, W_ n)
                 if (replay_enabled) {
                     barf("bd %p is replay.last_bd\n", (StgPtr)((W_)bd & 0x0fffff));
                 } else {
-                    debugBelch("bd %p is replay.last_bd\n", (StgPtr)((W_)bd & 0x0fffff));
+                    debugReplay("cap %d: bd %p is replay.last_bd\n",
+                                cap->no, (StgPtr)((W_)bd & 0x0fffff));
                 }
             }
 #endif
@@ -918,6 +944,8 @@ allocatePinned (Capability *cap, W_ n)
             }
             cap->r.rNursery->n_blocks -= bd->blocks;
 #ifdef REPLAY
+            debugReplay("cap %d: bd %p stolen from nursery\n",
+                        cap->no, (StgPtr)((W_)bd & 0x0fffff));
             // Emit an event so that that stealing this block will not
             // interfere with the allocation calculations to stop the thread
             // at replay time. It can be called from createThread() from the

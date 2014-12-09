@@ -193,8 +193,11 @@ static inline void postBuf(EventsBuf *eb, StgWord8 *buf, nat size)
 static inline void postEventTypeNum(EventsBuf *eb, EventTypeNum etNum)
 { postWord16(eb, etNum); }
 
-static inline void postTimestamp(EventsBuf *eb)
-{ postWord64(eb, time_ns()); }
+StgWord64 time_ns(void)
+{ return TimeToNS(stat_getElapsedTime()); }
+
+static inline EventTimestamp postTimestamp(EventsBuf *eb)
+{ EventTimestamp ts = time_ns(); postWord64(eb, ts); return ts; }
 
 static inline void postThreadID(EventsBuf *eb, EventThreadID id)
 { postWord32(eb,id); }
@@ -220,10 +223,14 @@ static inline void postTaskId(EventsBuf *eb, EventTaskId tUniq)
 static inline void postPayloadSize(EventsBuf *eb, EventPayloadSize size)
 { postWord16(eb,size); }
 
-static inline void postEventHeader(EventsBuf *eb, EventTypeNum type)
+static inline EventTimestamp postEventHeader(EventsBuf *eb, EventTypeNum type)
 {
+    EventTimestamp ts;
+
     postEventTypeNum(eb, type);
-    postTimestamp(eb);
+    ts = postTimestamp(eb);
+
+    return ts;
 }
 
 static inline void postInt8(EventsBuf *eb, StgInt8 i)
@@ -773,7 +780,7 @@ abortEventLogging(void)
  * Post an event message to the capability's eventlog buffer.
  * If the buffer is full, prints out the buffer and clears it.
  */
-void
+EventTimestamp
 postSchedEvent (Capability *cap, 
                 EventTypeNum tag, 
                 StgThreadID thread, 
@@ -781,6 +788,7 @@ postSchedEvent (Capability *cap,
                 StgWord info2)
 {
     EventsBuf *eb;
+    EventTimestamp ts;
 
     eb = &capEventBuf[cap->no];
 
@@ -789,7 +797,7 @@ postSchedEvent (Capability *cap,
         printAndClearEventBuf(eb);
     }
     
-    postEventHeader(eb, tag);
+    ts = postEventHeader(eb, tag);
 
     switch (tag) {
     case EVENT_CREATE_THREAD:   // (cap, thread)
@@ -825,6 +833,8 @@ postSchedEvent (Capability *cap,
     default:
         barf("postSchedEvent: unknown event tag %d", tag);
     }
+
+    return ts;
 }
 
 void

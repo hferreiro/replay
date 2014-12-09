@@ -44,16 +44,14 @@ CapEvent *nextEvent(void);
 void freeEvent(CapEvent *ce);
 #endif
 
-INLINE_HEADER StgWord64 time_ns(void)
-{ return TimeToNS(stat_getElapsedTime()); }
-
+StgWord64 time_ns(void);
 
 /*
  * Post a scheduler event to the capability's event buffer (an event
  * that has an associated thread).
  */
-void postSchedEvent(Capability *cap, EventTypeNum tag,
-                    StgThreadID id, StgWord info1, StgWord info2);
+EventTimestamp postSchedEvent(Capability *cap, EventTypeNum tag,
+                              StgThreadID id, StgWord info1, StgWord info2);
 
 /*
  * Post a nullary event.
