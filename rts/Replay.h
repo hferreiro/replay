@@ -49,7 +49,7 @@ extern rtsBool replay_enabled;
 void initReplay(void);
 void endReplay(void);
 
-void replayPrint(char *s, ...);
+void debugReplay(char *s, ...);
 void replayError(char *s, ...);
 #if defined(DEBUG)
 void replayCheckGCGeneric(StgPtr Hp, Capability *cap, StgPtr HpLim, bdescr *CurrentNursery);

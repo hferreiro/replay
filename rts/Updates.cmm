@@ -34,6 +34,10 @@ INFO_TABLE_RET ( stg_upd_frame, UPDATE_FRAME,
     /* ToDo: it might be a PAP, so we should check... */
     TICK_UPD_CON_IN_NEW(sizeW_fromITBL(%GET_STD_INFO(updatee)));
 
+#ifdef DEBUG
+    ccall debugReplay("cap %d: upd_frame: update BH %p with %p\n",
+                      Capability_no(MyCapability()), updatee "ptr", UNTAG(ret) "ptr");
+#endif
     updateWithIndirection(updatee, ret, return (ret));
 }
 
@@ -58,15 +62,27 @@ INFO_TABLE_RET ( stg_marked_upd_frame, UPDATE_FRAME,
         // updated by someone else: discard our value and use the
         // other one to increase sharing, but check the blocking
         // queues to see if any threads were waiting on this BLACKHOLE.
+#ifdef DEBUG
+        ccall debugReplay("cap %d: collision: %p -> %p already updated\n",
+                          Capability_no(MyCapability()), updatee "ptr", UNTAG(v) "ptr");
+#endif
         ccall checkBlockingQueues(MyCapability() "ptr", CurrentTSO "ptr");
         return (v);
     }
 
     // common case: it is still our BLACKHOLE
     if (v == CurrentTSO) {
+#ifdef DEBUG
+        ccall debugReplay("cap %d: marked_upd_frame: update our BH %p\n",
+                          Capability_no(MyCapability()), updatee "ptr");
+#endif
         updateWithIndirection(updatee, ret, return (ret));
     }
 
+#ifdef DEBUG
+    ccall debugReplay("cap %d: marked_upd_frame: other case updateThunk\n",
+                      Capability_no(MyCapability()));
+#endif
     // The other cases are all handled by the generic code
     ccall updateThunk (MyCapability() "ptr", CurrentTSO "ptr",
                        updatee "ptr", ret "ptr");

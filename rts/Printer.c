@@ -976,16 +976,20 @@ findPtr(P_ p, int follow)
    payload.
 */ 
 
-void prettyPrintClosure_ (StgClosure *);
+char *prettyPrintClosure_ (StgClosure *);
 
-void prettyPrintClosure (StgClosure *obj)
+char *prettyPrintClosure (StgClosure *obj)
 {
-   prettyPrintClosure_ (obj);
-   debugBelch ("\n");
+   return prettyPrintClosure_ (obj);
 }
 
-void prettyPrintClosure_ (StgClosure *obj)
+char *prettyPrintClosure_ (StgClosure *obj)
 {
+    char *r = NULL;
+    int len = 0, idx = 0;
+
+    obj = UNTAG_CLOSURE(obj);
+
     StgInfoTable *info;
     StgConInfoTable *con_info;
 
@@ -997,7 +1001,11 @@ void prettyPrintClosure_ (StgClosure *obj)
            type == IND_STATIC ||
            type == IND_PERM)
     {
-      obj = ((StgInd *)obj)->indirectee;
+      char *s = "IND => ";
+      len += strlen(s);
+      r = malloc(len + 1); 
+      r = strcpy(r, s);
+      obj = UNTAG_CLOSURE(((StgInd *)obj)->indirectee);
       type = get_itbl(obj)->type;
     }
 
@@ -1026,26 +1034,46 @@ void prettyPrintClosure_ (StgClosure *obj)
            /* obtain the name of the constructor */
            descriptor = GET_CON_DESC(con_info);
 
-           debugBelch ("(%s", descriptor);
+           //debugBelch ("(%s", descriptor);
+           idx = len;
+           len += 1 + strlen(descriptor);
+           r = realloc(r, len + 1);
+           sprintf(r + idx, "(%s", descriptor);
+
 
            /* process the payload of the closure */
            /* we don't handle non pointers at the moment */
            for (i = 0; i < info->layout.payload.ptrs; i++)
            {
-              debugBelch (" ");
-              prettyPrintClosure_ ((StgClosure *) obj->payload[i]);
+              //debugBelch (" ");
+              char *s = prettyPrintClosure_ ((StgClosure *) obj->payload[i]);
+              idx = len;
+              len += 1 + strlen(s);
+              r = realloc(r, len + 1);
+              sprintf(r + idx, " %s", s);
+              free(s);
            }
-           debugBelch (")");
+           //debugBelch (")");
+           idx = len;
+           len += 1;
+           r = realloc(r, len + 1);
+           sprintf(r + idx, ")");
            break;
         }
 
         /* if it isn't a constructor then just print the closure type */
         default:
         {
-           debugBelch ("<%s>", info_type(obj));
+           char *s = info_type(obj);
+           //debugBelch ("<%s>", info_type(obj));
+           idx = len;
+           len += 3 + strlen(s);
+           r = realloc(r, len + 1);
+           sprintf(r + idx, " <%s>", s);
            break;
         }
     }
+    return r;
 }
 
 char *what_next_strs[] = {

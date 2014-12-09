@@ -235,6 +235,8 @@ osGetMBlocks(nat n)
   if (myTask() != NULL) {
       cap = rts_unsafeGetMyCapability();
       traceCapValue(cap, STEAL_BLOCK, (W_)ret);
+  } else {
+      debugReplay("osGetMBlocks: %p\n", ret);
   }
 #endif
 
