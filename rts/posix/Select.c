@@ -146,6 +146,8 @@ awaitEvent(rtsBool wait)
     struct timeval tv, *ptv;
     LowResTime now;
 
+    replayError("awaitEvent\n");
+
     IF_DEBUG(scheduler,
 	     debugBelch("scheduler: checking for threads blocked on I/O");
 	     if (wait) {

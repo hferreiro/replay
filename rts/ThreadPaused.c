@@ -38,6 +38,9 @@ updateAdjacentFrames (Capability *cap, StgTSO *tso,
     struct stack_gap *gap;
     nat i;
 
+    debugReplay("cap %d: task %d: tso %d: updateAdjacentFrames\n", cap->no,
+                cap->running_task->no, tso->id);
+
     // The first one (highest address) is the frame we take the
     // "master" updatee from; all the others will be made indirections
     // to this one.  It is essential that we do it this way around: we
@@ -83,6 +86,9 @@ stackSqueeze(Capability *cap, StgTSO *tso, StgPtr bottom)
     StgPtr frame;
     nat adjacent_update_frames;
     struct stack_gap *gap;
+
+    debugReplay("cap %d: task %d: tso %d: stackSqueeze\n", cap->no,
+                cap->running_task->no, tso->id);
 
     // Stage 1: 
     //    Traverse the stack upwards, replacing adjacent update frames
@@ -302,9 +308,13 @@ threadPaused(Capability *cap, StgTSO *tso)
 #if defined(REPLAY) && defined(THREADED_RTS)
                 // emit it before any possible 'thread wakeup' event, to
                 // identify when to stop a thread from setupNextEvent()
+                debugReplay("cap %d: task %d: suspendComputation: bh %p\n",
+                            cap->no, cap->running_task->no, (void *)((W_)bh & 0x0fffff));
                 int id = replayFindSparkId(tso, bh);
                 ASSERT(id > 0);
                 replaySaveSparkId(bh, id);
+                debugBelch("cap %d: task %d: suspendComputation: spark %d bh %p\n",
+                           cap->no, cap->running_task->no, id, (void *)((W_)bh & 0x0fffff));
                 replayTraceCapValue(cap, SUSPEND_COMPUTATION, id);
 #endif
 		suspendComputation(cap,tso,(StgUpdateFrame*)frame);
@@ -343,6 +353,9 @@ threadPaused(Capability *cap, StgTSO *tso)
                 goto retry;
             }
 #endif
+
+            debugReplay("cap %d: task %d: threadPaused: pointing bh %p to TSO %d\n",
+                        cap->no, cap->running_task->no, (void *)((W_)bh & 0x0fffff), tso->id);
 
             // The payload of the BLACKHOLE points to the TSO
             ((StgInd *)bh)->indirectee = (StgClosure *)tso;

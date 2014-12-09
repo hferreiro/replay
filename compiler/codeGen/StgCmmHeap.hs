@@ -25,6 +25,7 @@ module StgCmmHeap (
 
 import StgSyn
 import CLabel
+--import StgCmmForeign
 import StgCmmLayout
 import StgCmmUtils
 import StgCmmMonad
@@ -611,6 +612,9 @@ do_checks mb_stk_hwm checkYield mb_alloc_lit do_gc = do
 
     alloc_n = mkAssign (CmmGlobal HpAlloc) alloc_lit
 
+    --trace_lbl = mkForeignLabel (fsLit "replayTraceCap") Nothing ForeignLabelInExternalPackage IsFunction
+    --myCapability = cmmOffset dflags (CmmReg baseReg) (oFFSET_Capability_r dflags)
+
   case mb_stk_hwm of
     Nothing -> return ()
     Just stk_hwm -> tickyStackCheck >> (emit =<< mkCmmIfGoto (sp_oflo stk_hwm) gc_id)
@@ -619,6 +623,12 @@ do_checks mb_stk_hwm checkYield mb_alloc_lit do_gc = do
     then do
      tickyHeapCheck
      emitAssign hpReg bump_hp
+     --slit <- newStringCLit "Hp = %p (+= %ld)\n"
+     --emitCCall [] (CmmLit (CmmLabel trace_lbl))
+     --          [(myCapability, AddrHint),
+     --           (CmmLit slit, AddrHint),
+     --           (cmmAndWord dflags (CmmReg hpReg) (CmmLit (mkIntCLit dflags 0x0fffff)), AddrHint),
+     --           (alloc_lit, SignedHint)]
      emit =<< mkCmmIfThen hp_oflo (alloc_n <*> mkBranch gc_id)
     else do
       when (not (gopt Opt_OmitYields dflags) && checkYield) $ do

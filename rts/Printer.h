@@ -22,7 +22,7 @@ char  *	           info_type_by_ip ( StgInfoTable *ip );
 char  *            info_update_frame ( StgClosure *closure );
 
 #ifdef DEBUG
-extern void        prettyPrintClosure (StgClosure *obj);
+extern char *      prettyPrintClosure (StgClosure *obj);
 extern void   	   printClosure    ( StgClosure *obj );
 extern StgPtr      printStackObj   ( StgPtr sp );
 extern void        printStackChunk ( StgPtr sp, StgPtr spLim );
