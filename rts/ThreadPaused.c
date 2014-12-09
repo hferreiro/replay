@@ -38,6 +38,9 @@ updateAdjacentFrames (Capability *cap, StgTSO *tso,
     struct stack_gap *gap;
     nat i;
 
+    debugReplay("cap %d: task %d: tso %d: updateAdjacentFrames\n", cap->no,
+                cap->running_task->no, tso->id);
+
     // The first one (highest address) is the frame we take the
     // "master" updatee from; all the others will be made indirections
     // to this one.  It is essential that we do it this way around: we
@@ -83,6 +86,9 @@ stackSqueeze(Capability *cap, StgTSO *tso, StgPtr bottom)
     StgPtr frame;
     nat adjacent_update_frames;
     struct stack_gap *gap;
+
+    debugReplay("cap %d: task %d: tso %d: stackSqueeze\n", cap->no,
+                cap->running_task->no, tso->id);
 
     // Stage 1: 
     //    Traverse the stack upwards, replacing adjacent update frames
@@ -303,6 +309,8 @@ threadPaused(Capability *cap, StgTSO *tso)
                 // emit it before any possible 'thread wakeup' event, to
                 // identify when to stop a thread from setupNextEvent()
                 if (TRACE_spark_full) {
+                    debugReplay("cap %d: task %d: suspendComputation: spark %p\n",
+                                cap->no, cap->running_task->no, bh);
                     replayTraceCapValue(cap, SUSPEND_COMPUTATION, (W_)bh);
                 }
 #endif
@@ -342,6 +350,9 @@ threadPaused(Capability *cap, StgTSO *tso)
                 goto retry;
             }
 #endif
+
+            debugReplay("cap %d: task %d: threadPaused: pointing bh %p to TSO %d\n",
+                        cap->no, cap->running_task->no, bh, tso->id);
 
             // The payload of the BLACKHOLE points to the TSO
             ((StgInd *)bh)->indirectee = (StgClosure *)tso;

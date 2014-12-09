@@ -252,13 +252,14 @@ void traceSchedEvent_stderr (Capability *cap, EventTypeNum tag,
 void traceSchedEvent_ (Capability *cap, EventTypeNum tag, 
                        StgTSO *tso, StgWord info1, StgWord info2)
 {
+    EventTimestamp ts;
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
         traceSchedEvent_stderr(cap, tag, tso, info1, info2);
     } else
 #endif
     {
-        postSchedEvent(cap,tag,tso ? tso->id : 0, info1, info2);
+        ts = postSchedEvent(cap,tag,tso ? tso->id : 0, info1, info2);
     }
 
     if (TRACE_spark_full && tag == EVENT_RUN_THREAD) {
@@ -269,8 +270,17 @@ void traceSchedEvent_ (Capability *cap, EventTypeNum tag,
     }
 
     if (replay_enabled) {
-        replayEvent(cap, createSchedEvent(tag, tso, info1, info2));
+        Event *ev = createSchedEvent(tag, tso, info1, info2);
+        ev->header.time = ts;
+        replayEvent(cap, ev);
     }
+#ifdef DEBUG
+    else {
+        Event *ev = createSchedEvent(tag, tso, info1, info2);
+        ev->header.time = ts;
+        printEvent(cap, ev);
+    }
+#endif
 
     if (TRACE_spark_full && tag == EVENT_STOP_THREAD) {
         // after replay because it emits EVENT_CAP_ALLOC
@@ -333,6 +343,11 @@ void traceGcEvent_ (Capability *cap, EventTypeNum tag)
     if (replay_enabled) {
         replayEvent(cap, createGcEvent(tag));
     }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createGcEvent(tag));
+    }
+#endif
 }
 
 void traceGcEventAtT_ (Capability *cap, StgWord64 ts, EventTypeNum tag)
@@ -350,6 +365,11 @@ void traceGcEventAtT_ (Capability *cap, StgWord64 ts, EventTypeNum tag)
     if (replay_enabled) {
         replayEvent(cap, createGcEvent(tag));
     }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createGcEvent(tag));
+    }
+#endif
 }
 
 void traceHeapEvent_ (Capability   *cap,
@@ -369,6 +389,11 @@ void traceHeapEvent_ (Capability   *cap,
     if (replay_enabled) {
         replayEvent(cap, createHeapEvent(tag, heap_capset, info1));
     }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createHeapEvent(tag, heap_capset, info1));
+    }
+#endif
 }
 
 void traceEventHeapInfo_ (CapsetID    heap_capset,
@@ -390,13 +415,17 @@ void traceEventHeapInfo_ (CapsetID    heap_capset,
     }
 
     if (replay_enabled) {
-        replayEvent(NULL, createHeapInfoEvent(heap_capset,
-                                              gens,
-                                              maxHeapSize,
-                                              allocAreaSize,
-                                              mblockSize,
+        replayEvent(NULL, createHeapInfoEvent(heap_capset, gens, maxHeapSize,
+                                              allocAreaSize, mblockSize,
                                               blockSize));
     }
+#ifdef DEBUG
+    else {
+        printEvent(NULL, createHeapInfoEvent(heap_capset, gens, maxHeapSize,
+                                             allocAreaSize, mblockSize,
+                                             blockSize));
+    }
+#endif
 }
 
 void traceEventGcStats_  (Capability *cap,
@@ -421,15 +450,17 @@ void traceEventGcStats_  (Capability *cap,
     }
 
     if (replay_enabled) {
-        replayEvent(cap, createGcStatsEvent(heap_capset,
-                                            gen,
-                                            copied,
-                                            slop,
-                                            fragmentation,
-                                            par_n_threads,
-                                            par_max_copied,
-                                            par_tot_copied));
+        replayEvent(cap, createGcStatsEvent(heap_capset, gen, copied, slop,
+                                            fragmentation, par_n_threads,
+                                            par_max_copied, par_tot_copied));
     }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createGcStatsEvent(heap_capset, gen, copied, slop,
+                                           fragmentation, par_n_threads,
+                                           par_max_copied, par_tot_copied));
+    }
+#endif
 }
 
 #ifdef DEBUG
@@ -475,6 +506,11 @@ void traceCapEvent (Capability   *cap,
     if (replay_enabled) {
         replayEvent(NULL, createCapEvent(tag, cap->no));
     }
+#ifdef DEBUG
+    else {
+        printEvent(NULL, createCapEvent(tag, cap->no));
+    }
+#endif
 }
 
 #ifdef DEBUG
@@ -527,6 +563,11 @@ void traceCapsetEvent (EventTypeNum tag,
     if (replay_enabled) {
         replayEvent(NULL, createCapsetEvent(tag, capset, info));
     }
+#ifdef DEBUG
+    else {
+        printEvent(NULL, createCapsetEvent(tag, capset, info));
+    }
+#endif
 }
 
 void traceWallClockTime_(void) {
@@ -537,6 +578,11 @@ void traceWallClockTime_(void) {
     if (replay_enabled) {
         replayEvent(NULL, createWallClockTimeEvent(CAPSET_CLOCKDOMAIN_DEFAULT));
     }
+#ifdef DEBUG
+    else {
+        printEvent(NULL, createWallClockTimeEvent(CAPSET_CLOCKDOMAIN_DEFAULT));
+    }
+#endif
 }
 
 void traceOSProcessArgsEnv_(void) {
@@ -672,6 +718,11 @@ void traceSparkEvent_ (Capability *cap, EventTypeNum tag, StgWord info1)
     if (replay_enabled) {
         replayEvent(cap, createSparkEvent(tag, info1));
     }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createSparkEvent(tag, info1));
+    }
+#endif
 }
 
 void traceSparkCounters_ (Capability *cap,
@@ -691,6 +742,11 @@ void traceSparkCounters_ (Capability *cap,
     if (replay_enabled) {
         replayEvent(cap, createSparkCountersEvent(counters, remaining));
     }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createSparkCountersEvent(counters, remaining));
+    }
+#endif
 }
 
 #ifdef DEBUG
@@ -736,6 +792,11 @@ void traceTaskCreate_ (Capability *cap,
     if (replay_enabled) {
         replayEvent(cap, createTaskCreateEvent(taskid, capno));
     }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createTaskCreateEvent(taskid, capno));
+    }
+#endif
 }
 
 void traceTaskMigrate_ (Task       *task,
@@ -758,6 +819,11 @@ void traceTaskMigrate_ (Task       *task,
     if (replay_enabled) {
         replayEvent(NULL, createTaskMigrateEvent(taskid, capno, new_capno));
     }
+#ifdef DEBUG
+    else {
+        printEvent(NULL, createTaskMigrateEvent(taskid, capno, new_capno));
+    }
+#endif
 }
 
 void traceTaskDelete_ (Capability *cap, Task *task)
@@ -774,8 +840,13 @@ void traceTaskDelete_ (Capability *cap, Task *task)
     }
 
     if (replay_enabled) {
-        replayEvent(NULL, createTaskDeleteEvent(taskid));
+        replayEvent(cap, createTaskDeleteEvent(taskid));
     }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createTaskDeleteEvent(taskid));
+    }
+#endif
 }
 
 #ifdef DEBUG
@@ -820,9 +891,18 @@ void traceCap_(Capability *cap, const char *msg, ...)
 
     if (replay_enabled) {
         va_start(ap, msg);
-        replayEvent(cap, createMsgEvent(EVENT_LOG_MSG, msg, ap));
+        Event *ev = createMsgEvent(EVENT_LOG_MSG, msg, ap);
         va_end(ap);
+        replayEvent(cap, ev);
     }
+#ifdef DEBUG
+    else {
+        va_start(ap, msg);
+        Event *ev = createMsgEvent(EVENT_LOG_MSG, msg, ap);
+        va_end(ap);
+        printEvent(cap, ev);
+    }
+#endif
 }
 
 #ifdef DEBUG
@@ -866,9 +946,18 @@ void trace_(const char *msg, ...)
 
     if (replay_enabled) {
         va_start(ap, msg);
-        replayEvent(NULL, createMsgEvent(EVENT_LOG_MSG, msg, ap));
+        Event *ev = createMsgEvent(EVENT_LOG_MSG, msg, ap);
         va_end(ap);
+        replayEvent(NULL, ev);
     }
+#ifdef DEBUG
+    else {
+        va_start(ap, msg);
+        Event *ev = createMsgEvent(EVENT_LOG_MSG, msg, ap);
+        va_end(ap);
+        printEvent(NULL, ev);
+    }
+#endif
 }
 
 static void traceFormatUserMsg(Capability *cap, const char *msg, ...)
@@ -897,9 +986,18 @@ static void traceFormatUserMsg(Capability *cap, const char *msg, ...)
 
     if (replay_enabled && TRACE_user) {
         va_start(ap, msg);
-        replayEvent(cap, createMsgEvent(EVENT_USER_MSG, msg, ap));
+        Event *ev = createMsgEvent(EVENT_USER_MSG, msg, ap);
         va_end(ap);
+        replayEvent(cap, ev);
     }
+#ifdef DEBUG
+    else {
+        va_start(ap, msg);
+        Event *ev = createMsgEvent(EVENT_USER_MSG, msg, ap);
+        va_end(ap);
+        printEvent(cap, ev);
+    }
+#endif
 }
 
 void traceUserMsg(Capability *cap, const char *msg)
@@ -927,6 +1025,11 @@ void traceUserMarker(Capability *cap, const char *markername)
     if (replay_enabled && TRACE_user) {
         replayEvent(cap, createUserMarkerEvent(markername));
     }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createUserMarkerEvent(markername));
+    }
+#endif
 }
 
 #ifdef DEBUG
@@ -960,6 +1063,11 @@ void traceThreadLabel_(Capability *cap,
     if (replay_enabled) {
         replayEvent(cap, createThreadLabelEvent(tso, label));
     }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createThreadLabelEvent(tso, label));
+    }
+#endif
 }
 
 void traceThreadStatus_ (StgTSO *tso USED_IF_DEBUG)
@@ -997,6 +1105,11 @@ void traceEventStartup_(int nocaps)
     if (replay_enabled) {
         replayEvent(NULL, createStartupEvent(nocaps));
     }
+#ifdef DEBUG
+    else {
+        printEvent(NULL, createStartupEvent(nocaps));
+    }
+#endif
 }
 
 #ifdef REPLAY
@@ -1030,6 +1143,11 @@ void traceCapAlloc_(Capability *cap USED_IF_DEBUG,
     if (replay_enabled) {
         replayEvent(cap, createCapAllocEvent(alloc, blocks, hp_alloc));
     }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createCapAllocEvent(alloc, blocks, hp_alloc));
+    }
+#endif
 }
 
 #ifdef DEBUG
@@ -1163,6 +1281,11 @@ void traceTaskAcquireCap_(Capability *cap, Task *task)
     if (replay_enabled) {
         replayEvent(cap, createTaskAcquireCapEvent(taskid));
     }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createTaskAcquireCapEvent(taskid));
+    }
+#endif
 }
 
 void traceTaskReleaseCap_(Capability *cap, Task *task)
@@ -1183,6 +1306,11 @@ void traceTaskReleaseCap_(Capability *cap, Task *task)
     if (replay_enabled) {
         replayEvent(cap, createTaskReleaseCapEvent(taskid));
     }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createTaskReleaseCapEvent(taskid));
+    }
+#endif
 }
 
 void traceTaskReturnCap_(Task *task, Capability *cap)
@@ -1203,6 +1331,11 @@ void traceTaskReturnCap_(Task *task, Capability *cap)
     if (replay_enabled) {
         replayEvent(NULL, createTaskReturnCapEvent(taskid, cap->no));
     }
+#ifdef DEBUG
+    else {
+        printEvent(NULL, createTaskReturnCapEvent(taskid, cap->no));
+    }
+#endif
 }
 #endif
 

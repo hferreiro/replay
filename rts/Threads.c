@@ -346,6 +346,9 @@ wakeBlockingQueue(Capability *cap, StgBlockingQueue *bq)
     MessageBlackHole *msg;
     const StgInfoTable *i;
 
+    debugReplay("cap %d: task %d: wakeBlockingQueue\n",
+                cap->no, cap->running_task->no);
+
     ASSERT(bq->header.info == &stg_BLOCKING_QUEUE_DIRTY_info  ||
            bq->header.info == &stg_BLOCKING_QUEUE_CLEAN_info  );
 
@@ -379,6 +382,9 @@ checkBlockingQueues (Capability *cap, StgTSO *tso)
 {
     StgBlockingQueue *bq, *next;
     StgClosure *p;
+
+    debugReplay("cap %d: task %d: checkBlockingQueues on tso %" FMT_Word "\n",
+                cap->no, cap->running_task->no, (W_)tso->id);
 
     debugTraceCap(DEBUG_sched, cap,
                   "collision occurred; checking blocking queues for thread %ld",

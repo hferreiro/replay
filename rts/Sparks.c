@@ -68,6 +68,8 @@ newSpark (StgRegTable *reg, StgClosure *p)
             cap->spark_stats.created++;
 #ifdef REPLAY
             if (TRACE_spark_full) {
+                debugReplay("cap %d: task %d: spark %" FMT_Word " created\n",
+                            cap->no, cap->running_task->no, SPARK_ID(p));
                 replaySaveSpark(cap, p);
                 replayTraceCapValue(cap, SPARK_CREATE, SPARK_ID(p));
             }
@@ -79,6 +81,8 @@ newSpark (StgRegTable *reg, StgClosure *p)
             cap->spark_stats.overflowed++;
 #ifdef REPLAY
             if (TRACE_spark_full) {
+                debugReplay("cap %d: task %d: spark %" FMT_Word " overflowed\n",
+                            cap->no, cap->running_task->no, SPARK_ID(p));
                 replayTraceCapValue(cap, SPARK_OVERFLOW, SPARK_ID(p));
             }
 #else
@@ -89,6 +93,8 @@ newSpark (StgRegTable *reg, StgClosure *p)
         cap->spark_stats.dud++;
 #ifdef REPLAY
         if (TRACE_spark_full) {
+            debugReplay("cap %d: task %d: spark %" FMT_Word " fizzled\n",
+                        cap->no, cap->running_task->no, SPARK_ID(p));
             replayTraceCapValue(cap, SPARK_DUD, SPARK_ID(p));
         }
 #else
@@ -241,6 +247,8 @@ pruneSparkQueue (Capability *cap)
           cap->spark_stats.fizzled++;
 #ifdef REPLAY
           if (TRACE_spark_full) {
+              debugReplay("cap %d: task %d: spark %" FMT_Word " fizzled\n",
+                          cap->no, cap->running_task->no, SPARK_ID(spark));
               replayTraceCapValue(cap, SPARK_FIZZLE, SPARK_ID(spark));
               ASSERT(GET_INFO(spark) == &stg_BLACKHOLE_info);
               ASSERT(SPARK_ATOM(spark) == BH_IND_ATOM);
@@ -268,6 +276,8 @@ pruneSparkQueue (Capability *cap)
                   cap->spark_stats.fizzled++;
 #ifdef REPLAY
                   if (TRACE_spark_full) {
+                      debugReplay("cap %d: task %d: spark %" FMT_Word " fizzled\n",
+                                  cap->no, cap->running_task->no, SPARK_ID(spark));
                       replayTraceCapValue(cap, SPARK_FIZZLE, SPARK_ID(spark));
                       ASSERT(SPARK_ATOM(tmp) == 0);
                   }
@@ -298,6 +308,8 @@ pruneSparkQueue (Capability *cap)
                       cap->spark_stats.fizzled++;
 #ifdef REPLAY
                       if (TRACE_spark_full) {
+                          debugReplay("cap %d: task %d: spark %" FMT_Word " fizzled\n",
+                                      cap->no, cap->running_task->no, SPARK_ID(spark));
                           replayTraceCapValue(cap, SPARK_FIZZLE, SPARK_ID(spark));
                           // blackhole pointing to TSO, etc.
                           ASSERT(SPARK_ATOM(spark) == 0);
@@ -311,6 +323,8 @@ pruneSparkQueue (Capability *cap)
                   cap->spark_stats.gcd++;
 #ifdef REPLAY
                   if (TRACE_spark_full) {
+                      debugReplay("cap %d: task %d: spark %" FMT_Word " gced\n",
+                                  cap->no, cap->running_task->no, SPARK_ID(spark));
                       replayTraceCapValue(cap, SPARK_GC, SPARK_ID(spark));
                       if (SPARK_ATOM(spark) != 0) {
                           RESET_SPARK(spark);
@@ -336,6 +350,8 @@ pruneSparkQueue (Capability *cap)
                       cap->spark_stats.gcd++;
 #ifdef REPLAY
                       if (TRACE_spark_full) {
+                          debugReplay("cap %d: task %d: spark %" FMT_Word " gced\n",
+                                      cap->no, cap->running_task->no, SPARK_ID(spark));
                           replayTraceCapValue(cap, SPARK_GC, SPARK_ID(spark));
                           ASSERT(SPARK_ATOM(spark) == SPARK_ID_ATOM);
                           RESET_SPARK(spark);
@@ -349,6 +365,8 @@ pruneSparkQueue (Capability *cap)
                   cap->spark_stats.fizzled++;
 #ifdef REPLAY
                   if (TRACE_spark_full) {
+                      debugReplay("cap %d: task %d: spark %" FMT_Word " fizzled\n",
+                                  cap->no, cap->running_task->no, SPARK_ID(spark));
                       replayTraceCapValue(cap, SPARK_FIZZLE, SPARK_ID(spark));
                       ASSERT(SPARK_ATOM(spark) == SPARK_ID_ATOM);
                       RESET_SPARK(spark);

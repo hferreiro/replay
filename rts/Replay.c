@@ -19,6 +19,7 @@
 #include "Schedule.h"
 #include "Task.h"
 #include "Trace.h"
+#include "Printer.h"
 #include "Replay.h"
 
 #include <math.h>
@@ -152,7 +153,7 @@ endReplay(void)
 }
 
 void
-replayPrint(char *s USED_IF_DEBUG, ...)
+debugReplay(char *s USED_IF_DEBUG, ...)
 {
 #if defined(DEBUG)
     if (TRACE_spark_full) {
@@ -180,10 +181,9 @@ replayError(char *s, ...)
 
 #if defined(DEBUG)
 static rtsBool
-nurseryReaches(bdescr *oldBd, bdescr *bd, StgPtr hp)
+nurseryReaches(bdescr *oldBd, bdescr *bd)
 {
     ASSERT(oldBd);
-    ASSERT(HP_IN_BD(bd, hp));
 
     if (oldBd != bd) {
         bdescr *bd_ = oldBd->link;
@@ -199,8 +199,9 @@ nurseryReaches(bdescr *oldBd, bdescr *bd, StgPtr hp)
 void
 replayCheckGCGeneric(StgPtr Hp, Capability *cap, StgPtr HpLim STG_UNUSED, bdescr *CurrentNursery)
 {
+    ASSERT(HP_IN_BD(CurrentNursery, Hp));
     if (cap->replay.last_bd) {
-        ASSERT(nurseryReaches(cap->replay.last_bd, CurrentNursery, Hp));
+        ASSERT(nurseryReaches(cap->replay.last_bd, CurrentNursery));
     }
 }
 #endif
@@ -210,9 +211,11 @@ replayCheckGCGeneric(StgPtr Hp, Capability *cap, StgPtr HpLim STG_UNUSED, bdescr
 void
 replaySaveHp(Capability *cap)
 {
-    replayPrint("Saving Hp...\n");
-    replayPrint("  hp    = %p\n", START_FREE(cap->r.rCurrentNursery));
-    replayPrint("  alloc = %ld\n\n", cap->replay.alloc);
+#ifdef DEBUG
+    debugReplay("Saving Hp...\n");
+    debugReplay("  hp    = %p\n", START_FREE(cap->r.rCurrentNursery));
+    debugReplay("  alloc = %ld\n\n", cap->replay.alloc);
+#endif
 
     ASSERT(cap->replay.last_bd == NULL);
     ASSERT(cap->replay.last_hp == NULL);
@@ -238,7 +241,8 @@ replaySaveAlloc(Capability *cap)
     hp = START_FREE(bd);
 
 #ifdef DEBUG
-    debugBelch("Yielded at %p\n", hp);
+    debugReplay("cap %d: task %d: yielding %p (%p)\n",
+                cap->no, cap->running_task->no, bd, hp);
 #endif
 
     // when replaying and only if the thread yielded
@@ -289,9 +293,9 @@ replaySaveAlloc(Capability *cap)
 static void GNU_ATTRIBUTE(__noreturn__)
 failedMatch(Capability *cap, Event *ev, Event *read)
 {
-    debugBelch("Got:\n  ");
+    debugReplay("Got:\n  ");
     printEvent(cap, ev);
-    debugBelch("Expected:\n  ");
+    debugReplay("Expected:\n  ");
     printEvent(cap, read);
     barf("replay: '%s' events did not match", EventDesc[ev->header.tag]);
 }
@@ -340,6 +344,13 @@ setupNextEvent(void)
             ASSERT(bd != NULL);
             ASSERT(hp != NULL);
 
+#ifdef DEBUG
+            //debugReplay("cap %d: setupNextEvent(): yield after:\n", cap->no);
+            //debugReplay("  blocks = %" FMT_Word64 " (%" FMT_Word64 ")\n", blocks, ev->blocks);
+            //debugReplay("  alloc = %" FMT_Word64 " (%" FMT_Word64 ")\n", alloc, ev->alloc);
+            //debugReplay("\n");
+#endif
+
             // add the allocated memory from the first block, so the loop
             // counts full blocks in every iteration, including the first one
             alloc += hp - START(bd);
@@ -355,6 +366,11 @@ setupNextEvent(void)
             cap->replay.bd = bd;
             cap->replay.hp = START(bd) + alloc;
             cap->replay.hp_alloc = ev->hp_alloc;
+
+#ifdef DEBUG
+            debugReplay("cap %d: setupNextEvent(): yield at bd (hp) = %p (%p)\n\n",
+                        cap->no, bd, cap->replay.hp);
+#endif
 
             // if we have to yield in the current block, set HpLim now
             if (cap->r.rCurrentNursery == bd) {
@@ -376,6 +392,8 @@ setupNextEvent(void)
 static void
 replaySync_(Capability *cap, Task *task)
 {
+    debugReplay("cap %d: task %d: replaySync_ with cap %d\n",
+                task->cap->no, task->no, cap->no);
     ASSERT(cap->running_task != NULL);
     ASSERT(cap->replay.sync_task == NULL);
     cap->replay.sync_task = task;
@@ -388,6 +406,7 @@ static void
 replayCont_(Capability *cap, Task *task)
 {
     if (cap->replay.sync_task != NULL) {
+        debugReplay("cap %d: task %d: replayCont_\n", cap->no, task->no);
         signalSemaphore(task_replay[cap->replay.sync_task->no]);
         waitSemaphore(task_replay[task->no]);
     }
@@ -749,6 +768,7 @@ out:
     }
 
 #ifdef DEBUG
+    ev->header.time = read->header.time;
     printEvent(cap, ev);
 #endif
 
@@ -810,6 +830,11 @@ replayCapValue(Capability *cap, int tag, W_ value)
     if (replay_enabled) {
         replayEvent(cap, createCapValueEvent(tag, value));
     }
+#ifdef DEBUG
+    else if (TRACE_spark_full) {
+        printEvent(cap, createCapValueEvent(tag, value));
+    }
+#endif
 }
 
 
@@ -851,6 +876,7 @@ void
 replayWorkerStart(Capability *cap, Task *task)
 {
     if (replay_enabled) {
+        debugReplay("new task %d\n", task->no);
         waitSemaphore(task_replay[task->no]);
     } else if (TRACE_spark_full) {
         // 'release capability' is cap local and is emitted always after
@@ -930,6 +956,8 @@ prepareSpark(Capability *cap, W_ spark)
         // TODO: may need to replay a few events to get to SPARK_CREATE
         CapEvent *ce = peekEventCap(0, cap->no);
         ASSERT(isEventCapValue(ce, SPARK_CREATE));
+        debugReplay("cap %d: task %d: sync with cap %d to create spark %p\n",
+                    myTask()->cap->no, myTask()->no, cap->no, (void *)spark);
 #endif
         replaySync_(cap, myTask());
     }
@@ -1077,11 +1105,20 @@ replayFindSpark(Capability *cap)
 
         // if (!fizzledSpark(spark)) {
         //     // TODO: sync until replayUpdateWithIndirection(spark)
+        //     debugReplay("cap %d: task %d: sync with cap %d to fizzle spark %d %p\n",
+        //                 cap->no, cap->running_task->no, robbed->no, id, spark);
         //     replaySync_(robbed, myTask());
         // }
         // ASSERT(fizzledSpark(spark));
 
+        if (!fizzledSpark(spark)) {
+            debugReplay("cap %d: task %d: spark %p should be fizzled, ignoring\n",
+                        cap->no, cap->running_task->no, robbed->no, spark);
+        }
+
         cap->spark_stats.fizzled++;
+        debugReplay("cap %d: task %d: spark %p fizzled\n",
+                    cap->no, cap->running_task->no, spark);
         replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
         ce = readEvent();
     }
@@ -1121,6 +1158,9 @@ replayReleaseCapability (Capability *from, Capability* cap)
     Task *task;
 
     task = cap->running_task;
+
+    debugReplay("cap %d: task %d: releaseCapability_\n", from->no, task->no);
+
     cap->running_task = NULL;
 
     ce = readEvent();
@@ -1167,6 +1207,7 @@ replayWaitForReturnCapability(Capability **pCap, Task *task)
     CapEvent *ce;
 
     cap = *pCap;
+
     if (cap == NULL) {
         taskAssignCap(task, &cap);
     }
@@ -1220,6 +1261,8 @@ yieldCapability_(Capability **pCap, Task *task)
 
     cap = *pCap;
 
+    debugReplay("cap %d: task %d: yieldCapability\n", cap->no, task->no);
+
     ce = readEvent();
     ASSERT(ce != NULL);
     if (ce->ev->header.tag == EVENT_GC_START) {
@@ -1233,6 +1276,7 @@ yieldCapability_(Capability **pCap, Task *task)
     }
 
     // releaseCapabilityAndQueueWorker()
+    debugReplay("cap %d: task %d: releaseCapabilityAndQueueWorker\n", cap->no, task->no);
     ASSERT(!task->stopped);
     if (!isBoundTask(task)) {
         if (cap->n_spare_workers < MAX_SPARE_WORKERS) {
@@ -1372,6 +1416,8 @@ replayActivateSpark(Capability *cap)
     ce = readEvent();
     ASSERT(ce != NULL);
     if (ce->ev->header.tag == EVENT_CREATE_THREAD) {
+        debugReplay("cap %d: task %d: scheduleActivateSpark\n",
+                    cap->no, cap->running_task->no);
         createSparkThread(cap);
     }
 }
@@ -1448,6 +1494,7 @@ replayDetectDeadlock(Capability **pCap, Task *task)
     if (isEventCapValue(ce, GC)) {
         // majorGC
         if (((EventCapValue *)ce->ev)->value) {
+            debugReplay("cap %d: task %d: scheduleDetectDeadlock\n", (*pCap)->no, task->no);
             scheduleDoGC (pCap, task, rtsTrue);
         }
     }
@@ -1487,7 +1534,7 @@ replayYield(Capability **pCap, Task *task)
             *pCap = cap;
             return;
         default:
-            debugBelch("Imposible event after scheduleYield():\n");
+            debugReplay("Imposible event after scheduleYield():\n");
             printEvent(cap, ce->ev);
             abort();
             stg_exit(EXIT_INTERNAL_ERROR);
@@ -1501,6 +1548,8 @@ replayRequestSync(Capability **pCap, Task *task, nat sync_type)
 {
     nat prev_pending_sync;
     CapEvent *ce;
+
+    debugReplay("cap %d: task %d: requestSync\n", (*pCap)->no, task->no);
 
     ce = readEvent();
     ASSERT(ce != NULL);
@@ -1537,7 +1586,7 @@ replayRequestSync(Capability **pCap, Task *task, nat sync_type)
         prev_pending_sync = 0;
         break;
     default:
-        debugBelch("Imposible event after requestSync():\n");
+        debugReplay("Imposible event after requestSync():\n");
         printEvent(*pCap, ce->ev);
         abort();
         stg_exit(EXIT_INTERNAL_ERROR);
@@ -1561,6 +1610,7 @@ replayExitScheduler(Task *task)
         if (sched_state < SCHED_INTERRUPTING) {
             sched_state = SCHED_INTERRUPTING;
         }
+        debugReplay("task %d: SCHED_INTERRUPTING\n", task->no);
 
         Capability *cap = task->cap;
         waitForReturnCapability(&cap,task);
@@ -1571,6 +1621,7 @@ replayExitScheduler(Task *task)
     }
 
     sched_state = SCHED_SHUTTING_DOWN;
+    debugReplay("task %d: SCHED_SHUTTING_DOWN\n", task->no);
 
     shutdownCapabilities(task, rtsFalse);
 
@@ -1604,6 +1655,8 @@ replayThreadPaused(Capability *cap, StgTSO *tso, StgClosure *bh)
         // The thunk may have been restored for tso to carry on with
         // the computation. We need to blackhole it to suspend the computation
         if (GET_INFO(bh) != &stg_BLACKHOLE_info) {
+            debugReplay("cap %d: task %d: tso %d: replayThreadPaused: blackholing spark %p\n",
+                        cap->no, cap->running_task->no, tso->id, bh);
             SET_INFO(bh, &stg_BLACKHOLE_info);
         }
         return rtsTrue;
@@ -1930,7 +1983,6 @@ replayLoop(void)
 {
     CapEvent *ce = NULL;
     int taskid;
-    replayPrint("=> replayLoop\n");
 
     while (1) {
         if (ce != NULL && ce->ev->header.tag == EVENT_TASK_DELETE &&
@@ -1943,15 +1995,16 @@ replayLoop(void)
         }
         ASSERT(ce != NULL);
 
-        replayPrint("replayLoop: next event is '%s'\n", EventDesc[ce->ev->header.tag]);
+        //debugReplay("replayLoop: next event is '%s'\n", EventDesc[ce->ev->header.tag]);
 
         setupNextEvent();
         taskid = eventTask(ce->capno, ce->ev);
 
-        replayPrint("waking up %d\n", taskid);
         if (taskid == -1) {
+            //debugReplay("waking up initial thread\n");
             signalSemaphore(&no_task);
         } else {
+            //debugReplay("waking up %d [%p]\n", taskid, task_replay[taskid]);
             signalSemaphore(task_replay[taskid]);
         }
         waitSemaphore(&replay_sched);
@@ -1972,7 +2025,7 @@ replayLoop(void)
 #else
 void initReplay(void) {}
 void endReplay(void) {}
-void replayPrint(char *s STG_UNUSED, ...) {}
+void debugReplay(char *s STG_UNUSED, ...) {}
 void replayError(char *s STG_UNUSED, ...) {}
 void replaySaveHp(Capability *cap STG_UNUSED) {}
 void replaySaveAlloc(Capability *cap STG_UNUSED) {}
