@@ -28,10 +28,12 @@
 #else
 
 #include <pthread.h>
+#include <semaphore.h>
 #include <errno.h>
 
 typedef pthread_cond_t  Condition;
 typedef pthread_mutex_t Mutex;
+typedef sem_t           Semaphore;
 typedef pthread_t       OSThreadId;
 typedef pthread_key_t   ThreadLocalKey;
 
@@ -190,6 +192,14 @@ extern rtsBool waitCondition      ( Condition* pCond, Mutex* pMut );
 //
 extern void initMutex             ( Mutex* pMut );
 extern void closeMutex            ( Mutex* pMut );
+
+//
+// Semaphores
+//
+extern void initSemaphore         ( Semaphore *pSem );
+extern void closeSemaphore        ( Semaphore *pSem );
+extern rtsBool signalSemaphore    ( Semaphore *pSem );
+extern rtsBool waitSemaphore      ( Semaphore *pSem );
 
 //
 // Thread-local storage

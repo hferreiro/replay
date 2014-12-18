@@ -541,7 +541,7 @@ void traceWallClockTime_(void) {
     }
 }
 
-void traceOSProcessInfo_(void) {
+void traceOSProcessArgsEnv_(void) {
     if (eventlog_enabled) {
         {
             int argc = 0; char **argv;
@@ -562,6 +562,11 @@ void traceOSProcessInfo_(void) {
             }
             freeProgEnvv(envc, envv);
         }
+    }
+}
+
+void traceOSProcessInfo_(void) {
+    if (eventlog_enabled) {
         postCapsetEvent(EVENT_OSPROCESS_PID,
                         CAPSET_OSPROCESS_DEFAULT,
                         getpid());
@@ -991,7 +996,9 @@ void traceEventStartup_(int nocaps)
         }
     }
 
-    // already replayed in initReplay
+    if (replay_enabled) {
+        replayEvent(NULL, createStartupEvent(nocaps));
+    }
 }
 
 #ifdef REPLAY
@@ -1032,7 +1039,39 @@ void traceCapValue_stderr(Capability *cap,
                           nat         tag,
                           W_          value)
 {
-    traceCap_stderr(cap, "tag: %d, value: %" FMT_Word, tag, value);
+    const char *str;
+    switch (tag) {
+    case CTXT_SWITCH:
+        str = "context switch";
+        break;
+    case SCHED_LOOP:
+        str = "scheduler loop";
+        break;
+    case SEND_MESSAGE:
+        str = "send message";
+        break;
+    case TAKE_MVAR:
+        str = "take MVar";
+        break;
+    case PUT_MVAR:
+        str = "put MVar";
+        break;
+    case GC:
+        str = "GC";
+        break;
+    case PROCESS_INBOX:
+        str = "process inbox";
+        break;
+    case SCHED_END:
+        str = "scheduler end";
+        break;
+    case STEAL_BLOCK:
+        str = "steal block";
+        break;
+    default:
+        barf("traceCapValue_stderr: unknown capability tag in event");
+    }
+    traceCap_stderr(cap, "tag: %s, value: %" FMT_Word, str, value);
 }
 #endif
 

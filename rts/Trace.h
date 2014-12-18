@@ -297,6 +297,8 @@ void traceCapsetEvent (EventTypeNum tag,
 
 void traceWallClockTime_(void);
 
+void traceOSProcessArgsEnv_(void);
+
 void traceOSProcessInfo_ (void);
 
 void traceSparkCounters_ (Capability *cap,
@@ -348,6 +350,7 @@ INLINE_HEADER void traceEventStartup_ (int n_caps STG_UNUSED) {};
 #define traceCapEvent(cap, tag) /* nothing */
 #define traceCapsetEvent(tag, capset, info) /* nothing */
 #define traceWallClockTime_() /* nothing */
+#define traceOSProcessArgsEnv_() /* nothing */
 #define traceOSProcessInfo_() /* nothing */
 #define traceSparkCounters_(cap, counters, remaining) /* nothing */
 #define traceTaskCreate_(cap, taskID, capno) /* nothing */
@@ -811,6 +814,13 @@ INLINE_HEADER void traceWallClockTime(void)
     /* Note: no DTrace equivalent because it is available to DTrace directly */
 }
 
+INLINE_HEADER void traceOSProcessArgsEnv(void)
+{
+    traceOSProcessArgsEnv_();
+    /* Note: no DTrace equivalent because all this OS process info
+     * is available to DTrace directly */
+}
+
 INLINE_HEADER void traceOSProcessInfo(void)
 {
     traceOSProcessInfo_();
@@ -889,7 +899,7 @@ INLINE_HEADER void traceTaskCreate(Capability *cap STG_UNUSED,
                                    Task       *task STG_UNUSED,
                                    Capability *where STG_UNUSED)
 {
-    ASSERT(task->cap == cap);
+    ASSERT(task->cap == where);
     // TODO: asserting task->cap == NULL would be much stronger
     // (the intention being that the task structure is just created and empty)
     // but would require large changes of traceTaskCreate calls.
@@ -934,14 +944,18 @@ INLINE_HEADER void traceCapAlloc(Capability *cap USED_IF_TRACING,
                                  W_          blocks USED_IF_TRACING,
                                  W_          hp_alloc USED_IF_TRACING)
 {
-    traceCapAlloc_(cap, alloc, blocks, hp_alloc);
+    if (RTS_UNLIKELY(TRACE_sched)) {
+        traceCapAlloc_(cap, alloc, blocks, hp_alloc);
+    }
 }
 
 INLINE_HEADER void traceCapValue(Capability *cap USED_IF_TRACING,
                                  nat         tag USED_IF_TRACING,
                                  W_          value USED_IF_TRACING)
 {
-    traceCapValue_(cap, tag, value);
+    if (RTS_UNLIKELY(TRACE_sched)) {
+        traceCapValue_(cap, tag, value);
+    }
 }
 
 INLINE_HEADER void traceTaskAcquireCap (Capability *cap USED_IF_TRACING,

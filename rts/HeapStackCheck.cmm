@@ -107,11 +107,10 @@ stg_gc_noregs
         }
         if (HpLim == 0 ||
 #ifdef REPLAY
-            (Hp == yield_hp && HpAlloc == yield_hp_alloc)
-#else
+            (Hp == yield_hp && HpAlloc == yield_hp_alloc) ||
+#endif
             Capability_context_switch(MyCapability()) != 0 :: CInt ||
             Capability_interrupt(MyCapability())      != 0 :: CInt
-#endif
             ) {
             ret = ThreadYielding;
             goto sched;
@@ -553,7 +552,13 @@ stg_block_takemvar_finally
     W_ r1, r3;
     r1 = R1;
     r3 = R3;
+#if defined(REPLAY) && defined(THREADED_RTS)
+    foreign "C" replayMVar(MyCapability() "ptr",
+                           R3 "ptr", stg_MVAR_DIRTY_info "ptr",
+                           4, 0); // TAKE_MVAR 0
+#else
     unlockClosure(R3, stg_MVAR_DIRTY_info);
+#endif
     R1 = r1;
     R3 = r3;
     jump StgReturn [R1];
@@ -608,7 +613,13 @@ stg_block_putmvar_finally
     W_ r1, r3;
     r1 = R1;
     r3 = R3;
+#if defined(REPLAY) && defined(THREADED_RTS)
+    foreign "C" replayMVar(MyCapability() "ptr",
+                           R3 "ptr", stg_MVAR_DIRTY_info "ptr",
+                           5, 0); // PUT_MVAR 0
+#else
     unlockClosure(R3, stg_MVAR_DIRTY_info);
+#endif
     R1 = r1;
     R3 = r3;
     jump StgReturn [R1];

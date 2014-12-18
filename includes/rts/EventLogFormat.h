@@ -245,8 +245,16 @@ typedef StgWord16 EventCapsetType;   /* types for EVENT_CAPSET_CREATE */
 typedef StgWord64 EventTaskId;         /* for EVENT_TASK_* */
 typedef StgWord64 EventKernelThreadId; /* for EVENT_TASK_CREATE */
 typedef enum {
-    CTXT_SWITCH = 0,
-} EventCapVar; /* for EVENT_CAP_VALUE */
+    CTXT_SWITCH,
+    SCHED_LOOP,
+    SEND_MESSAGE,
+    TAKE_MVAR,
+    PUT_MVAR,
+    GC,
+    PROCESS_INBOX,
+    SCHED_END,
+    STEAL_BLOCK,
+} EventCapTag;
 
 #endif
 

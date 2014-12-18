@@ -1308,7 +1308,13 @@ loop:
         StgMVar_value(mvar) = stg_END_TSO_QUEUE_closure;
         // If the MVar is not already dirty, then we don't need to make
         // it dirty, as it is empty with nothing blocking on it.
+#if defined(REPLAY) && defined(THREADED_RTS)
+        ccall replayMVar(MyCapability() "ptr",
+                         mvar "ptr", info "ptr",
+                         4, 1); // TAKE_MVAR 1
+#else
         unlockClosure(mvar, info);
+#endif
         return (val);
     }
     if (StgHeader_info(q) == stg_IND_info ||
@@ -1344,7 +1350,13 @@ loop:
 
     ccall tryWakeupThread(MyCapability() "ptr", tso);
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+    ccall replayMVar(MyCapability() "ptr",
+                     mvar "ptr", stg_MVAR_DIRTY_info "ptr",
+                     4, 2); // TAKE_MVAR 2
+#else
     unlockClosure(mvar, stg_MVAR_DIRTY_info);
+#endif
     return (val);
 }
 
@@ -1464,7 +1476,13 @@ loop:
             ccall dirty_MVAR(BaseReg "ptr", mvar "ptr");
         }
         StgMVar_value(mvar) = val;
+#if defined(REPLAY) && defined(THREADED_RTS)
+        ccall replayMVar(MyCapability() "ptr",
+                         mvar "ptr", stg_MVAR_DIRTY_info "ptr",
+                         5, 1); // PUT_MVAR 1
+#else
         unlockClosure(mvar, stg_MVAR_DIRTY_info);
+#endif
         return ();
     }
     if (StgHeader_info(q) == stg_IND_info ||
@@ -1510,7 +1528,13 @@ loop:
 
     ASSERT(why_blocked == BlockedOnMVar);
 
-    unlockClosure(mvar, info);
+#if defined(REPLAY) && defined(THREADED_RTS)
+        ccall replayMVar(MyCapability() "ptr",
+                         mvar "ptr", info "ptr",
+                         5, 2); // PUT_MVAR 2
+#else
+        unlockClosure(mvar, info);
+#endif
     return ();
 }
 

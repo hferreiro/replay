@@ -58,23 +58,20 @@ Mutex eventBufMutex; // protected by this mutex
 static char *eventLogFilenameReplay = NULL;
 
 FILE  *fileReplay = NULL;
+int fileReplayStartSeek; // record where events start
 
 typedef struct _ReplayBuf {
     EventsBuf eb;   // pos points to the next byte to read
                     // marker points to the first empty position
     FILE *f;        // each capability reads in different positions
-    Event *ev;      // current event
+    CapEvent *ce;   // cached linked events, capno is unset
+    nat ceSize;     // cached events list size
 } ReplayBuf;
 
 static ReplayBuf *capReplayBuf;
 static ReplayBuf  replayBuf;
 
-typedef struct _OrderedEvent {
-    CapEvent *ce;
-    struct _OrderedEvent *next;
-} OrderedEvent;
-
-static OrderedEvent *eventList = NULL;
+static CapEvent *eventList = NULL;
 static nat eventListSize = 0;
 
 const char *EventDesc[] = {
@@ -405,11 +402,14 @@ static void fillReplayBuf(ReplayBuf *rb);
 static void readEventType(void);
 static Event *getEvent(ReplayBuf *rb);
 
-static Event *replayBufCurrent(ReplayBuf *rb);
+static CapEvent *replayBufCurrent(ReplayBuf *rb);
+static CapEvent *replayBufN(ReplayBuf *rb, nat n);
+static CapEvent *replayBufNext(ReplayBuf *rb);
+static CapEvent *replayBufForward(ReplayBuf *rb);
 
-static OrderedEvent *eventListN(nat n);
-static OrderedEvent *eventListNew(CapEvent *ce);
-static OrderedEvent *eventListNext(void);
+static CapEvent *eventListN(nat n);
+static CapEvent *eventListNew(CapEvent *ce);
+static CapEvent *eventListNext(void);
 static void eventListForward(void);
 #endif
 
@@ -1571,7 +1571,7 @@ void
 initEventLoggingReplay(void)
 {
     StgInt32 i32;
-    nat n_caps, end;
+    nat end;
 
     eventLogFilenameReplay = stgMallocBytes(strlen(prog_name)
                                             + 8  /* .replay */,
@@ -1625,13 +1625,9 @@ initEventLoggingReplay(void)
     if (i32 != EVENT_DATA_BEGIN)
         barf("Data begin marker not found");
 
-#ifdef THREADED_RTS
-    // XXX n_capabilities hasn't been initislised yet
-    n_caps = RtsFlags.ParFlags.nNodes;
-#else
-    n_caps = 1;
-#endif
-    moreCapEventBufsReplay(0, n_caps);
+    fileReplayStartSeek = ftell(fileReplay);
+    // args have not been parsed yet
+    moreCapEventBufsReplay(0, 1);
 
     initReplayBuf(&replayBuf, -1, fileReplay);
 }
@@ -1667,6 +1663,8 @@ endEventLoggingReplay(void)
     if (eventLogFilenameReplay != NULL) {
         stgFree(eventLogFilenameReplay);
     }
+
+    ASSERT(eventList == NULL);
 }
 
 void
@@ -1690,7 +1688,7 @@ moreCapEventBufsReplay(nat from, nat to)
             sysErrorBelch("moreCapReplayBuf: can't open %s", eventLogFilenameReplay);
             stg_exit(EXIT_FAILURE);
         }
-        fseek(f, ftell(fileReplay), SEEK_SET);
+        fseek(f, fileReplayStartSeek, SEEK_SET);
         initReplayBuf(&capReplayBuf[c], c, f);
     }
 }
@@ -1701,14 +1699,16 @@ initReplayBuf(ReplayBuf *rb, EventCapNo capno, FILE *f)
     initEventsBuf(&rb->eb, EVENT_LOG_SIZE, capno);
     rb->eb.pos = rb->eb.marker = rb->eb.begin;
     rb->f = f;
-    rb->ev = NULL;
+    rb->ce = NULL;
+    rb->ceSize = 0;
 }
 
 static void
 resetReplayBuf(ReplayBuf *rb)
 {
     rb->eb.pos = rb->eb.marker = rb->eb.begin;
-    rb->ev = NULL;
+    rb->ce = NULL;
+    rb->ceSize = 0;
 }
 
 static void
@@ -2110,72 +2110,142 @@ getEvent(ReplayBuf *rb)
 
 // Returns the current event in the buffer,
 // forces a read if not available.
-static Event *
+static CapEvent *
 replayBufCurrent(ReplayBuf *rb)
 {
-    if (rb->ev != NULL) {
-        return rb->ev;
+    CapEvent *ce;
+
+    ce = NULL;
+    if (rb->ce != NULL) {
+        ce = rb->ce;
     } else {
-        rb->ev = getEvent(rb);
-        return rb->ev;
+        ASSERT(rb->ceSize == 0);
+        ce = replayBufNext(rb);
     }
+
+    return ce;
+}
+
+// Returns the nth event in a replay buffer
+static CapEvent *
+replayBufN(ReplayBuf *rb, nat n)
+{
+    ASSERT(rb != NULL);
+    ASSERT(n < rb->ceSize);
+
+    nat i;
+    CapEvent *ce = rb->ce;
+    for (i = 0; i < n; i++) {
+        ASSERT(ce->next);
+        ce = ce->next;
+    }
+
+    return ce;
+}
+
+// Reads a new event into the replay buffer
+static CapEvent *
+replayBufNext(ReplayBuf *rb)
+{
+    ASSERT(rb != NULL);
+
+    Event *ev;
+    CapEvent *ce;
+
+    ce = rb->ce;
+    if (ce != NULL) {
+        while (ce->next != NULL) {
+            ce = ce->next;
+        }
+    }
+
+    ev = getEvent(rb);
+    if (ev != NULL) {
+        CapEvent *new;
+
+        new = stgMallocBytes(sizeof(CapEvent), "replayBufNext");
+        new->capno = rb->eb.capno;
+        new->ev = ev;
+        new->next = NULL;
+
+        if (ce != NULL) {
+            ce->next = new;
+        } else {
+            rb->ce = new;
+        }
+        rb->ceSize++;
+
+        return new;
+    }
+
+    return NULL;
+}
+
+// Clears the currently cached event in its replay buffer
+static CapEvent *
+replayBufForward(ReplayBuf *rb)
+{
+    CapEvent *ce;
+
+    ASSERT(rb->ce != NULL);
+    ce = rb->ce;
+    rb->ce = ce->next;
+    rb->ceSize--;
+    ce->next = NULL;
+    return ce;
 }
 
 // Returns the nth event in eventList.
-static OrderedEvent *
+static CapEvent *
 eventListN(nat n)
 {
     ASSERT(eventList);
     ASSERT(n < eventListSize);
 
-    OrderedEvent *oe = eventList;
+    CapEvent *ce = eventList;
     nat i = 0;
     for (i = 0; i < n; i++) {
-        ASSERT(oe->next);
-        oe = oe->next;
+        ASSERT(ce->next);
+        ce = ce->next;
     }
 
-    return oe;
+    return ce;
 }
 
-// Caches a new event in eventList.
-static OrderedEvent *
-eventListNew(CapEvent *ce)
+// Caches a new event in the global eventList
+static CapEvent *
+eventListNew(CapEvent *new)
 {
-    OrderedEvent *oe, *new;
+    CapEvent *ce;
 #ifdef DEBUG
     nat n = 0;
 #endif
 
-    new = stgMallocBytes(sizeof(OrderedEvent), "eventListNew");
-    new->ce = ce;
-    new->next = NULL;
     if (eventList == NULL) {
         ASSERT(eventListSize == 0);
         eventList = new;
     } else {
-        oe = eventList;
-        while (oe->next) {
-            oe = oe->next;
+        ce = eventList;
+        while (ce->next) {
+            ce = ce->next;
 #ifdef DEBUG
             n++;
 #endif
         }
         ASSERT(n == eventListSize-1);
-        oe->next = new;
+        ce->next = new;
     }
     eventListSize++;
 
     return new;
 }
 
-// Stores a new event in eventList.
-static OrderedEvent *
+// Reads a new event into the global eventList
+static CapEvent *
 eventListNext(void)
 {
     ReplayBuf *rb;
-    CapEvent *ce;
-    Event *ev;
+    CapEvent *ce, *other;
     nat c, n_caps;
 
 #ifdef THREADED_RTS
@@ -2186,19 +2256,18 @@ eventListNext(void)
 
     // check which event happened earlier
     rb = &replayBuf;
-    replayBufCurrent(rb);
+    ce = replayBufCurrent(rb);
     for (c = 0; c < n_caps; c++) {
-        ev = replayBufCurrent(&capReplayBuf[c]);
-        if (rb->ev == NULL ||
-            (ev != NULL && ev->header.time < rb->ev->header.time)) {
+        other = replayBufCurrent(&capReplayBuf[c]);
+        if (ce == NULL ||
+            (other != NULL && other->ev->header.time < ce->ev->header.time)) {
             rb = &capReplayBuf[c];
+            ce = other;
         }
     }
-    c = rb->eb.capno;
-    ev = replayBufCurrent(rb);
 
     // we may have read all events
-    if (ev == NULL) {
+    if (ce == NULL) {
         ASSERT(replayBuf.f == NULL);
         for (c = 0; c < n_caps; c++) {
             ASSERT(capReplayBuf[c].f == NULL);
@@ -2206,13 +2275,8 @@ eventListNext(void)
         return NULL;
     }
 
-    ce = stgMallocBytes(sizeof(CapEvent), "eventListNext");
-    ce->capno = c;
-    ce->ev = ev;
-
-    // clear the replay buffer so next time we read a new event and
-    // cache the current event
-    rb->ev = NULL;
+    // advace the replay buffer and cache the current event in the global list
+    replayBufForward(rb);
     return eventListNew(ce);
 }
 
@@ -2220,40 +2284,94 @@ eventListNext(void)
 static void
 eventListForward(void)
 {
-    ASSERT(eventList);
-
-    OrderedEvent *oe = eventList;
+    ASSERT(eventList != NULL);
     eventList = eventList->next;
     eventListSize--;
-    stgFree(oe);
 }
 
-// Returns the nth event (comparing timestamps from all capabilities), reading
-// new events if needed, and saving them in the eventList buffer
-CapEvent *
+// Returns the global nth event
+static CapEvent *
 peekEvent(nat n)
 {
-    OrderedEvent *oe;
+    CapEvent *ce;
 
-    if (n < eventListSize) {
-        oe = eventListN(n);
+    if (eventListSize > n) {
+        ce = eventListN(n);
     } else {
-        while (n >= eventListSize) {
-            oe = eventListNext();
-            if (oe == NULL) {
+        while (eventListSize <= n) {
+            ce = eventListNext();
+        }
+    }
+    return ce;
+}
+
+// Returns the nth event from a specific capability
+CapEvent *
+peekEventCap(nat n, int capno)
+{
+    ReplayBuf *rb;
+    CapEvent *ce;
+
+    // search in eventList
+    ce = eventList;
+    while (ce != NULL) {
+        if (ce->capno == capno) {
+            if (n == 0) {
+                return ce;
+            }
+            n--;
+        }
+        ce = ce->next;
+    }
+
+    // search in replayBuf[capno]
+    if (capno == -1) {
+        rb = &replayBuf;
+    } else {
+        rb = &capReplayBuf[capno];
+    }
+
+    if (rb->ceSize > n) {
+        ce = replayBufN(rb, n);
+    } else {
+        while (rb->ceSize <= n) {
+            ce = replayBufNext(rb);
+            if (ce == NULL) {
                 return NULL;
             }
         }
     }
 
-    return oe->ce;
+    return ce;
+}
+
+CapEvent *
+searchEventTagValueBefore(nat tag, W_ value, nat last)
+{
+    nat n = 0;
+    CapEvent *ce;
+    Event *ev;
+
+    ASSERT(last < NUM_GHC_EVENT_TAGS);
+    ev = createCapValueEvent(tag, value);
+    do {
+        ce = peekEvent(n++);
+        if (ce == NULL || ce->ev->header.tag == last) {
+            return NULL;
+        }
+    } while (!compareEvents(ce->ev, ev));
+    return ce;
 }
 
 // Returns the current event.
 CapEvent *
 readEvent(void)
 {
-    return peekEvent(0);
+    if (eventListSize == 0) {
+        return NULL;
+    }
+    ASSERT(eventList != NULL);
+    return eventList;
 }
 
 // Read a new event from the event log (clears the last cached event and
@@ -2261,11 +2379,19 @@ readEvent(void)
 CapEvent *
 nextEvent(void)
 {
+    CapEvent *ce;
+
     if (eventListSize > 0) {
         eventListForward();
     }
 
-    return readEvent();
+    if (eventListSize > 0) {
+        ce = eventList;
+    } else {
+        ce = eventListNext();
+    }
+
+    return ce;
 }
 
 void
