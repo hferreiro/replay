@@ -777,13 +777,29 @@ StgPtr allocate (Capability *cap, W_ n)
             // The point is to get the block out of the way of the
             // advancing CurrentNursery pointer, while keeping it
             // on the nursery list so we don't lose track of it.
+#ifdef REPLAY
+            //replayFixAllocate(cap, bd);
+            if (bd == cap->replay.last_bd) {
+                if (replay_enabled) {
+                    barf("bd %p is replay.last_bd\n", (StgPtr)((W_)bd & 0x0fffff));
+                } else {
+                    debugBelch("bd %p is replay.last_bd\n", (StgPtr)((W_)bd & 0x0fffff));
+                }
+            }
+#endif
             cap->r.rCurrentNursery->link = bd->link;
             if (bd->link != NULL) {
                 bd->link->u.back = cap->r.rCurrentNursery;
             }
-            // HACK: so that that stealing this block will not interfere with
-            // the allocation calculations to stop the thread at replay time
-            traceEventGcGlobalSync(cap);
+#ifdef REPLAY
+            // Emit an event so that that stealing this block will not
+            // interfere with the allocation calculations to stop the thread
+            // at replay time. It can be called from createThread() from the
+            // RTS, which would be harmless.
+            if (cap->in_haskell) {
+                replayTraceCapTag(cap, STEAL_BLOCK);
+            }
+#endif
         }
         dbl_link_onto(bd, &cap->r.rNursery->blocks);
         cap->r.rCurrentAlloc = bd;
@@ -886,14 +902,30 @@ allocatePinned (Capability *cap, W_ n)
             initBdescr(bd, g0, g0);
         } else {
             // we have a block in the nursery: steal it
+#ifdef REPLAY
+            //replayFixAllocate(cap, bd);
+            if (bd == cap->replay.last_bd) {
+                if (replay_enabled) {
+                    barf("bd %p is replay.last_bd\n", (StgPtr)((W_)bd & 0x0fffff));
+                } else {
+                    debugBelch("bd %p is replay.last_bd\n", (StgPtr)((W_)bd & 0x0fffff));
+                }
+            }
+#endif
             cap->r.rCurrentNursery->link = bd->link;
             if (bd->link != NULL) {
                 bd->link->u.back = cap->r.rCurrentNursery;
             }
             cap->r.rNursery->n_blocks -= bd->blocks;
-            // HACK: so that that stealing this block will not interfere with
-            // the allocation calculations to stop the thread at replay time
-            traceEventGcGlobalSync(cap);
+#ifdef REPLAY
+            // Emit an event so that that stealing this block will not
+            // interfere with the allocation calculations to stop the thread
+            // at replay time. It can be called from createThread() from the
+            // RTS, which would be harmless.
+            if (cap->in_haskell) {
+                replayTraceCapTag(cap, STEAL_BLOCK);
+            }
+#endif
         }
 
         cap->pinned_object_block = bd;

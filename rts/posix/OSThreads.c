@@ -116,6 +116,32 @@ waitCondition ( Condition* pCond, Mutex* pMut )
 }
 
 void
+initSemaphore(Semaphore *pSem)
+{
+    sem_init(pSem, 0, 0);
+    return;
+}
+
+void
+closeSemaphore(Semaphore *pSem)
+{
+    sem_destroy(pSem);
+    return;
+}
+
+rtsBool
+signalSemaphore(Semaphore *pSem)
+{
+    return (sem_post(pSem) == 0);
+}
+
+rtsBool
+waitSemaphore(Semaphore *pSem)
+{
+    return (sem_wait(pSem) == 0);
+}
+
+void
 yieldThread(void)
 {
   sched_yield();

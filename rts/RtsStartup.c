@@ -64,7 +64,7 @@ void exitLinker( void );	// there is no Linker.h file to include
 #endif
 
 // Count of how many outstanding hs_init()s there have been.
-static int hs_init_count = 0;
+int hs_init_count = 0;
 
 static void flushStdHandles(void);
 
@@ -175,6 +175,13 @@ hs_init_ghc(int *argc, char **argv[], RtsConfig rts_config)
     initTracing();
 #endif
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+    replay_init_thread = osThreadId();
+#endif
+
+    /* first event, so that it can be parsed when replaying */
+    traceOSProcessArgsEnv();
+
     /* Trace the startup event
      */
     traceEventStartup();
@@ -266,9 +273,9 @@ hs_init_ghc(int *argc, char **argv[], RtsConfig rts_config)
     initProfiling2();
 
     // ditto.
-#if defined(THREADED_RTS)
-    //ioManagerStart();
-#endif
+//#if defined(THREADED_RTS)
+//    ioManagerStart();
+//#endif
 
     /* Record initialization times */
     stat_endInit();
@@ -413,6 +420,9 @@ hs_exit_(rtsBool wait_foreign)
     // during endProfiling().
     if (prof_file != NULL) fclose(prof_file);
 #endif
+
+    // last event
+    traceEventStartup_(0);
 
 #ifdef TRACING
     endTracing();
