@@ -46,12 +46,35 @@ void sendMessage(Capability *from_cap, Capability *to_cap, Message *msg)
     if (to_cap->running_task == NULL) {
 	to_cap->running_task = myTask(); 
             // precond for releaseCapability_()
-        releaseCapability_(from_cap,to_cap,rtsFalse);
+        traceTaskAcquireCap(to_cap, myTask());
+
+#ifdef REPLAY
+        if (replay_enabled) {
+            replayReleaseCapability(from_cap, to_cap);
+        } else
+#endif
+        {
+            releaseCapability_(from_cap,to_cap,rtsFalse);
+#ifdef REPLAY
+            traceTaskReleaseCap(to_cap, myTask());
+#endif
+        }
     } else {
         interruptCapability(to_cap);
     }
 
+#ifdef REPLAY
+    // TODO: message ordering
+    traceCapValue(from_cap, SEND_MESSAGE, 0);
+#endif
+
     RELEASE_LOCK(&to_cap->lock);
+
+#ifdef REPLAY
+    if (replay_enabled) {
+        replayCapTag(from_cap, SEND_MESSAGE);
+    }
+#endif
 }
 
 #endif /* THREADED_RTS */

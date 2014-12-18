@@ -35,7 +35,8 @@ void initEventLoggingReplay(void);
 void endEventLoggingReplay(void);
 void moreCapEventBufsReplay(nat from, nat to);
 
-CapEvent *peekEvent(nat n);
+CapEvent *peekEventCap(nat n, int capno);
+CapEvent *searchEventTagValueBefore(nat tag, W_ value, nat last);
 CapEvent *readEvent(void);
 CapEvent *nextEvent(void);
 void freeEvent(CapEvent *ce);

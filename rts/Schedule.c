@@ -42,6 +42,7 @@
 #include "ThreadPaused.h"
 #include "Messages.h"
 #include "Stable.h"
+#include "Replay.h"
 
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
@@ -152,7 +153,6 @@ static void scheduleHandleThreadBlocked( StgTSO *t );
 static rtsBool scheduleHandleThreadFinished( Capability *cap, Task *task,
 					     StgTSO *t );
 static rtsBool scheduleNeedHeapProfile(rtsBool ready_to_gc);
-static void scheduleDoGC(Capability **pcap, Task *task, rtsBool force_major);
 
 static void deleteThread (Capability *cap, StgTSO *tso);
 static void deleteAllThreads (Capability *cap);
@@ -244,12 +244,30 @@ schedule (Capability *initialCapability, Task *task)
     //
     //   * We might be left with threads blocked in foreign calls, 
     //     we should really attempt to kill these somehow (TODO);
-    
+
+    // sched_state is a global variable and can change at any point,
+    // trace the constant values directly
+#if defined(REPLAY) && defined(THREADED_RTS)
+    W_ sched_state_;
+    if (replay_enabled) {
+        sched_state_ = replayCapTag(cap, SCHED_LOOP);
+    } else {
+        sched_state_ = sched_state;
+    }
+    switch (sched_state_) {
+#else
     switch (sched_state) {
+#endif
     case SCHED_RUNNING:
+#if defined(REPLAY) && defined(THREADED_RTS)
+        traceCapValue(cap, SCHED_LOOP, SCHED_RUNNING);
+#endif
 	break;
     case SCHED_INTERRUPTING:
 	debugTrace(DEBUG_sched, "task %d: SCHED_INTERRUPTING", task->no);
+#if defined(REPLAY) && defined(THREADED_RTS)
+        traceCapValue(cap, SCHED_LOOP, SCHED_INTERRUPTING);
+#endif
         /* scheduleDoGC() deletes all the threads */
         scheduleDoGC(&cap,task,rtsFalse);
 
@@ -259,9 +277,17 @@ schedule (Capability *initialCapability, Task *task)
         // case now.
         ASSERT(sched_state == SCHED_SHUTTING_DOWN);
         // fall through
+#if defined(REPLAY) && defined(THREADED_RTS)
+        if (replay_enabled) {
+            replayCapTag(cap, SCHED_LOOP);
+        }
+#endif
 
     case SCHED_SHUTTING_DOWN:
 	debugTrace(DEBUG_sched, "task %d: SCHED_SHUTTING_DOWN", task->no);
+#if defined(REPLAY) && defined(THREADED_RTS)
+        traceCapValue(cap, SCHED_LOOP, SCHED_SHUTTING_DOWN);
+#endif
 	// If we are a worker, just exit.  If we're a bound thread
 	// then we will exit below when we've removed our TSO from
 	// the run queue.
@@ -388,7 +414,11 @@ schedule (Capability *initialCapability, Task *task)
      */
     if (RtsFlags.ConcFlags.ctxtSwitchTicks == 0
 	&& !emptyThreadQueues(cap)) {
-	cap->context_switch = 1;
+#ifdef REPLAY
+        if (!replay_enabled) {
+            cap->context_switch = 1;
+        }
+#endif
     }
 	 
 run_thread:
@@ -668,6 +698,13 @@ scheduleYield (Capability **pcap, Task *task)
     Capability *cap = *pcap;
     int didGcLast = rtsFalse;
 
+#ifdef REPLAY
+    if (replay_enabled) {
+        replayYield(pcap, task);
+        return;
+    }
+#endif
+
     // if we have work, and we don't need to give up the Capability, continue.
     //
     if (!shouldYieldCapability(cap,task,rtsFalse) && 
@@ -710,6 +747,13 @@ schedulePushWork(Capability *cap USED_IF_THREADS,
 
     // migration can be turned off with +RTS -qm
     if (!RtsFlags.ParFlags.migrate) return;
+
+#ifdef REPLAY
+    if (replay_enabled) {
+        replayPushWork(cap, task);
+        return;
+    }
+#endif
 
     // Check whether we have more threads on our run queue, or sparks
     // in our pool, that we could hand to another Capability.
@@ -888,6 +932,14 @@ static void
 scheduleDetectDeadlock (Capability **pcap, Task *task)
 {
     Capability *cap = *pcap;
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+    if (replay_enabled) {
+        replayDetectDeadlock(pcap, task);
+        return;
+    }
+#endif
+
     /*
      * Detect deadlock: when we have no threads to run, there are no
      * threads blocked, waiting for I/O, or sleeping, and all the
@@ -1002,6 +1054,13 @@ scheduleProcessInbox (Capability **pcap USED_IF_THREADS)
     int r;
     Capability *cap = *pcap;
 
+#ifdef REPLAY
+    if (replay_enabled) {
+        replayProcessInbox(pcap);
+        return;
+    }
+#endif
+
     while (!emptyInbox(cap)) {
         if (cap->r.rCurrentNursery->link == NULL ||
             g0->n_new_large_words >= large_alloc_lim) {
@@ -1027,6 +1086,18 @@ scheduleProcessInbox (Capability **pcap USED_IF_THREADS)
 
         RELEASE_LOCK(&cap->lock);
 
+#ifdef REPLAY
+        next = m;
+        r = 0;
+        while (next != (Message *)END_TSO_QUEUE) {
+            next = next->link;
+            r++;
+        }
+        if (r > 0) {
+            replayTraceCapValue(cap, PROCESS_INBOX, r);
+        }
+#endif
+
         while (m != (Message*)END_TSO_QUEUE) {
             next = m->link;
             executeMessage(cap, m);
@@ -1044,6 +1115,13 @@ scheduleProcessInbox (Capability **pcap USED_IF_THREADS)
 static void
 scheduleActivateSpark(Capability *cap)
 {
+#ifdef REPLAY
+    if (replay_enabled) {
+        replayActivateSpark(cap);
+        return;
+    }
+#endif
+
     if (anySparks() && !cap->disabled)
     {
         createSparkThread(cap);
@@ -1162,8 +1240,7 @@ scheduleHandleHeapOverflow( Capability *cap, StgTSO *t )
     
 #ifdef REPLAY
     if (replay_enabled) {
-        // the value is going to be overwritten anyway
-        replayEvent(cap, createCapValueEvent(CTXT_SWITCH, 0));
+        replayCapTag(cap, CTXT_SWITCH);
     }
 #endif
     if (cap->r.rHpLim == NULL || cap->context_switch) {
@@ -1171,11 +1248,15 @@ scheduleHandleHeapOverflow( Capability *cap, StgTSO *t )
         // primitives in a tight loop, MAYBE_GC() doesn't check the
         // context switch flag, and we end up waiting for a GC.
         // See #1984, and concurrent/should_run/1984
+#ifdef REPLAY
         traceCapValue(cap, CTXT_SWITCH, 1);
+#endif
         cap->context_switch = 0;
         appendToRunQueue(cap,t);
     } else {
+#ifdef REPLAY
         traceCapValue(cap, CTXT_SWITCH, 0);
+#endif
         pushOnRunQueue(cap,t);
     }
     return rtsTrue;
@@ -1215,16 +1296,19 @@ scheduleHandleYield( Capability *cap, StgTSO *t, nat prev_what_next )
     // better than the alternative.
 #ifdef REPLAY
     if (replay_enabled) {
-        // the value is going to be overwritten anyway
-        replayEvent(cap, createCapValueEvent(CTXT_SWITCH, 0));
+        replayCapTag(cap, CTXT_SWITCH);
     }
 #endif
     if (cap->context_switch != 0) {
+#ifdef REPLAY
         traceCapValue(cap, CTXT_SWITCH, 1);
+#endif
         cap->context_switch = 0;
         appendToRunQueue(cap,t);
     } else {
+#ifdef REPLAY
         traceCapValue(cap, CTXT_SWITCH, 0);
+#endif
         pushOnRunQueue(cap,t);
     }
 
@@ -1452,7 +1536,7 @@ static void releaseAllCapabilities(nat n, Capability *cap, Task *task)
  * Perform a garbage collection if necessary
  * -------------------------------------------------------------------------- */
 
-static void
+void
 scheduleDoGC (Capability **pcap, Task *task USED_IF_THREADS,
               rtsBool force_major)
 {
@@ -1471,6 +1555,10 @@ scheduleDoGC (Capability **pcap, Task *task USED_IF_THREADS,
         // now.
         return;
     }
+
+#ifdef REPLAY
+    replayTraceCapValue(cap, GC, force_major);
+#endif
 
     heap_census = scheduleNeedHeapProfile(rtsTrue);
 
@@ -1505,7 +1593,14 @@ scheduleDoGC (Capability **pcap, Task *task USED_IF_THREADS,
 	yieldCapability() and releaseCapability() in Capability.c */
 
     do {
-        sync = requestSync(pcap, task, gc_type);
+#ifdef REPLAY
+        if (replay_enabled) {
+            sync = replayRequestSync(pcap, task, gc_type);
+        } else
+#endif
+        {
+            sync = requestSync(pcap, task, gc_type);
+        }
         cap = *pcap;
         if (sync == SYNC_GC_SEQ || sync == SYNC_GC_PAR) {
             // someone else had a pending sync request for a GC, so
@@ -1614,13 +1709,28 @@ scheduleDoGC (Capability **pcap, Task *task USED_IF_THREADS,
 
     IF_DEBUG(scheduler, printAllThreads());
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+    W_ sched_state_;
+#endif
 delete_threads_and_gc:
     /*
      * We now have all the capabilities; if we're in an interrupting
      * state, then we should take the opportunity to delete all the
      * threads in the system.
      */
+#if defined(REPLAY) && defined(THREADED_RTS)
+    if (replay_enabled) {
+        sched_state_ = replayCapTag(cap, SCHED_LOOP);
+    } else {
+        sched_state_ = sched_state;
+    }
+    if (sched_state_ == SCHED_INTERRUPTING) {
+#else
     if (sched_state == SCHED_INTERRUPTING) {
+#endif
+#if defined(REPLAY) && defined(THREADED_RTS)
+        traceCapValue(cap, SCHED_LOOP, SCHED_INTERRUPTING);
+#endif
 	deleteAllThreads(cap);
 #if defined(THREADED_RTS)
         // Discard all the sparks from every Capability.  Why?
@@ -2242,13 +2352,28 @@ suspendThread (StgRegTable *reg, rtsBool interruptible)
   task->incall->suspended_tso = tso;
   task->incall->suspended_cap = cap;
 
-  ACQUIRE_LOCK(&cap->lock);
+#if defined(REPLAY) && defined(THREADED_RTS)
+  if (!replay_enabled)
+#endif
+  {
+      ACQUIRE_LOCK(&cap->lock);
+  }
 
   suspendTask(cap,task);
   cap->in_haskell = rtsFalse;
-  releaseCapability_(cap,cap,rtsFalse);
-  
-  RELEASE_LOCK(&cap->lock);
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+  if (replay_enabled) {
+      replayReleaseCapability(cap, cap);
+  } else
+#endif
+  {
+      releaseCapability_(cap,cap,rtsFalse);
+#if defined(REPLAY) && defined(THREADED_RTS)
+      traceTaskReleaseCap(cap, task);
+#endif
+      RELEASE_LOCK(&cap->lock);
+  }
 
   errno = saved_errno;
 #if mingw32_HOST_OS
@@ -2402,6 +2527,16 @@ void scheduleWorker (Capability *cap, Task *task)
     // schedule() runs without a lock.
     cap = schedule(cap,task);
 
+#ifdef REPLAY
+    replayTraceCapTag(cap, SCHED_END);
+
+    if (replay_enabled) {
+        replayReleaseCapability(cap, cap);
+        workerTaskStop(cap, task);
+        return;
+    }
+#endif
+
     // On exit from schedule(), we have a Capability, but possibly not
     // the same one we started with.
 
@@ -2416,6 +2551,9 @@ void scheduleWorker (Capability *cap, Task *task)
     //
     ACQUIRE_LOCK(&cap->lock);
     releaseCapability_(cap,cap,rtsFalse);
+#if defined(REPLAY)
+    traceTaskReleaseCap(cap, task);
+#endif
     workerTaskStop(cap, task);
     RELEASE_LOCK(&cap->lock);
 }
@@ -2498,6 +2636,13 @@ exitScheduler (rtsBool wait_foreign USED_IF_THREADS)
 
     task = newBoundTask();
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+    if (replay_enabled) {
+        replayExitScheduler(task);
+        return;
+    }
+#endif
+
     // If we haven't killed all the threads yet, do it now.
     if (sched_state < SCHED_SHUTTING_DOWN) {
 	sched_state = SCHED_INTERRUPTING;
@@ -2505,6 +2650,12 @@ exitScheduler (rtsBool wait_foreign USED_IF_THREADS)
         waitForReturnCapability(&cap,task);
         scheduleDoGC(&cap,task,rtsTrue);
         ASSERT(task->incall->tso == NULL);
+#ifdef REPLAY
+        // if we loose pending_sync in requestSync() we will keep yielding
+        // instead of exiting scheduleDoGC() and do releaseCapability().
+        // Recognise this situation with this event in replayRequestSync()
+        replayTraceCapTag(cap, SCHED_END);
+#endif
         releaseCapability(cap, cap);
     }
     sched_state = SCHED_SHUTTING_DOWN;

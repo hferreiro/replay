@@ -253,6 +253,8 @@ emptyThreadQueues(Capability *cap)
     ;
 }
 
+void scheduleDoGC (Capability **pCap, Task *task, rtsBool force_major);
+
 #endif /* !IN_STG_CODE */
 
 #include "EndPrivate.h"

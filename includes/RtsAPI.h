@@ -81,6 +81,8 @@ extern void startupHaskell         ( int argc, char *argv[],
 /* DEPRECATED, use hs_exit() instead  */
 extern void shutdownHaskell        ( void );
 
+extern int hs_init_count;
+
 /* Like hs_init(), but allows rtsopts. For more complicated usage,
  * use hs_init_ghc. */
 extern void hs_init_with_rtsopts (int *argc, char **argv[]);

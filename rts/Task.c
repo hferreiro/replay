@@ -128,6 +128,11 @@ allocTask (void)
         task = newTask(rtsFalse);
 #if defined(THREADED_RTS)
         task->id = osThreadId();
+#if defined(REPLAY)
+        if (task->id == replay_init_thread) {
+            replay_main_task = task;
+        }
+#endif
 #endif
         setMyTask(task);
         return task;
@@ -240,6 +245,11 @@ newTask (rtsBool worker)
             peakWorkerCount = currentWorkerCount;
         }
     }
+
+#if defined(THREADED_RTS) && defined(REPLAY)
+    replayNewTask(task);
+#endif
+
     RELEASE_LOCK(&all_tasks_mutex);
 
     return task;
@@ -390,6 +400,18 @@ workerTaskStop (Capability *cap, Task *task)
     ASSERT(task->id == id);
     ASSERT(myTask() == task);
 
+#ifdef REPLAY
+    // replay while task is reachable from all_tasks
+    if (replay_enabled) {
+        traceTaskDelete(cap, task);
+        // replayEvent() unlinks the task so that freeTaskManager doesn't find
+        // it alive
+        currentWorkerCount--;
+        freeTask(task);
+        return;
+    }
+#endif
+
     ACQUIRE_LOCK(&all_tasks_mutex);
 
     if (task->all_prev) {
@@ -405,7 +427,12 @@ workerTaskStop (Capability *cap, Task *task)
 
     RELEASE_LOCK(&all_tasks_mutex);
 
-    traceTaskDelete(cap, task);
+#ifdef REPLAY
+    if (!replay_enabled)
+#endif
+    {
+        traceTaskDelete(cap, task);
+    }
 
     freeTask(task);
 }
@@ -433,8 +460,9 @@ workerStart(Task *task)
 
     newInCall(task);
 
-    // Everything set up; emit the event before the worker starts working.
-    traceTaskCreate(cap, task, cap);
+#ifdef REPLAY
+    replayWorkerStart(cap, task);
+#endif
 
     scheduleWorker(cap,task);
 }
@@ -474,8 +502,12 @@ startWorkerTask (Capability *from, Capability *cap)
 
   task->id = tid;
 
-  // ok, finished with the Task struct.
+#ifdef REPLAY
+  replayStartWorkerTask(from, task, cap);
+#else
+  traceTaskCreate(from, task, cap);
   RELEASE_LOCK(&task->lock);
+#endif
 }
 
 void

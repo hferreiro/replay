@@ -399,21 +399,27 @@ stopCapability (Capability *cap)
     // It may not work - the thread might be updating HpLim itself
     // at the same time - so we also have the context_switch/interrupted
     // flags as a sticky way to tell the thread to stop.
-    cap->r.rHpLim = NULL;
+    if (!replay_enabled) {
+        cap->r.rHpLim = NULL;
+    }
 }
 
 INLINE_HEADER void
 interruptCapability (Capability *cap)
 {
-    stopCapability(cap);
-    cap->interrupt = 1;
+    if (!replay_enabled) {
+        stopCapability(cap);
+        cap->interrupt = 1;
+    }
 }
 
 INLINE_HEADER void
 contextSwitchCapability (Capability *cap)
 {
-    stopCapability(cap);
-    cap->context_switch = 1;
+    if (!replay_enabled) {
+        stopCapability(cap);
+        cap->context_switch = 1;
+    }
 }
 
 #ifdef THREADED_RTS

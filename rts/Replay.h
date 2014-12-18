@@ -13,6 +13,10 @@
 
 #include "Event.h"
 
+#ifdef THREADED_RTS
+#include "rts/OSThreads.h"
+#endif
+
 typedef struct _ReplayData {
     StgPtr  hp;         // Hp value when yielding
     W_      hp_adjust;  // case expressions allocate space for its worst-case
@@ -49,6 +53,39 @@ void replaySaveHp(Capability *cap);
 void replaySaveAlloc(Capability *cap);
 
 void replayEvent(Capability *cap, Event *ev);
+
+#ifdef REPLAY
+void replayTraceCapTag(Capability *cap, int tag);
+void replayTraceCapValue(Capability *cap, int tag, int value);
+int replayCapTag(Capability *cap, int tag);
+
+#ifdef THREADED_RTS
+extern OSThreadId  replay_init_thread;
+extern Task       *replay_main_task;
+
+void replayNewTask(Task *task);
+void replayWorkerStart(Capability *cap, Task *task);
+void replayStartWorkerTask(Capability *from, Task *task, Capability *cap);
+
+void replayMVar(Capability *cap, StgClosure *p, const StgInfoTable *info, int tag, int value);
+
+void replayReleaseCapability (Capability *from, Capability* cap);
+void replayWaitForReturnCapability(Capability **pCap, Task *task);
+void replayShutdownCapability(Capability *cap, Task *task);
+void replayYieldCapability(Capability **pCap, Task *task);
+
+void replayProcessInbox(Capability **pCap);
+void replayActivateSpark(Capability *cap);
+void replayPushWork(Capability *cap, Task *task);
+void replayDetectDeadlock(Capability **pCap, Task *task);
+void replayYield(Capability **pCap, Task *task);
+rtsBool replayTryGrabCapability(Capability *cap, Task *task);
+nat replayRequestSync(Capability **pCap, Task *task, nat sync_type);
+void replayExitScheduler(Task *task);
+
+void replayRtsUnlock(Capability *cap, Task *task);
+#endif
+#endif
 
 #include "EndPrivate.h"
 

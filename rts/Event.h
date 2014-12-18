@@ -29,6 +29,7 @@ typedef struct _Event {
 typedef struct _CapEvent {
     EventCapNo  capno;
     Event      *ev;
+    struct _CapEvent *next;
 } CapEvent;
 
 typedef struct _EventThread {
