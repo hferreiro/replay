@@ -17,6 +17,7 @@
 #include "Capability.h"
 #include "Stable.h"
 #include "Weak.h"
+#include "Replay.h"
 
 /* ----------------------------------------------------------------------------
    Building Haskell objects from C datatypes.
@@ -590,6 +591,13 @@ rts_unlock (Capability *cap)
     task = cap->running_task;
     ASSERT_FULL_CAPABILITY_INVARIANTS(cap,task);
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+    if (replay_enabled) {
+        replayRtsUnlock(cap, task);
+        return;
+    }
+#endif
+
     // Now release the Capability.  With the capability released, GC
     // may happen.  NB. does not try to put the current Task on the
     // worker queue.
@@ -602,6 +610,9 @@ rts_unlock (Capability *cap)
     // freeTaskManager().
     ACQUIRE_LOCK(&cap->lock);
     releaseCapability_(cap,cap,rtsFalse);
+#if defined(REPLAY) && defined(THREADED_RTS)
+    traceTaskReleaseCap(cap, task);
+#endif
 
     // Finally, we can release the Task to the free list.
     boundTaskExiting(task);

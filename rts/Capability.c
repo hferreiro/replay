@@ -300,7 +300,7 @@ initCapability( Capability *cap, nat i )
     traceCapCreate(cap);
     traceCapsetAssignCap(CAPSET_OSPROCESS_DEFAULT, i);
     traceCapsetAssignCap(CAPSET_CLOCKDOMAIN_DEFAULT, i);
-#if defined(THREADED_RTS)
+#if defined(THREADED_RTS) && !defined(REPLAY)
     traceSparkCounters(cap);
 #endif
 }
@@ -465,6 +465,12 @@ releaseCapability_ (Capability *from,
 
     ASSERT_PARTIAL_CAPABILITY_INVARIANTS(cap,task);
 
+#ifdef REPLAY
+    if (replay_enabled) {
+        barf("Called releaseCapability_()");
+    }
+#endif
+
     cap->running_task = NULL;
 
     // Check to see whether a worker thread can be given
@@ -533,8 +539,22 @@ void
 releaseCapability (Capability *from USED_IF_THREADS,
                    Capability* cap USED_IF_THREADS)
 {
+    Task *task USED_IF_REPLAY;
+
+    task = cap->running_task;
+
+#ifdef REPLAY
+    if (replay_enabled) {
+        replayReleaseCapability(from, cap);
+        return;
+    }
+#endif
+
     ACQUIRE_LOCK(&cap->lock);
     releaseCapability_(from, cap, rtsFalse);
+#ifdef REPLAY
+    traceTaskReleaseCap(cap, task);
+#endif
     RELEASE_LOCK(&cap->lock);
 }
 
@@ -542,20 +562,41 @@ void
 releaseAndWakeupCapability (Capability *from USED_IF_THREADS,
                             Capability* cap USED_IF_THREADS)
 {
+    Task *task USED_IF_REPLAY;
+
+    task = cap->running_task;
+
+    debugBelch("cap %d: task %d: releaseAndWakeupCapability\n", from->no, task->no);
+
+#ifdef REPLAY
+    if (replay_enabled) {
+        replayReleaseCapability(from, cap);
+        return;
+    }
+#endif
+
     ACQUIRE_LOCK(&cap->lock);
     releaseCapability_(from, cap, rtsTrue);
+#ifdef REPLAY
+    traceTaskReleaseCap(cap, task);
+#endif
     RELEASE_LOCK(&cap->lock);
 }
 
 static void
-releaseCapabilityAndQueueWorker (Capability *from USED_IF_THREADS,
-                                 Capability* cap USED_IF_THREADS)
+releaseCapabilityAndQueueWorker (Capability* cap USED_IF_THREADS)
 {
     Task *task;
 
     ACQUIRE_LOCK(&cap->lock);
 
     task = cap->running_task;
+
+#ifdef REPLAY
+    if (replay_enabled) {
+        barf("Called releaseCapabilityAndQueueWorker()");
+    }
+#endif
 
     // If the Task is stopped, we shouldn't be yielding, we should
     // be just exiting.
@@ -576,9 +617,14 @@ releaseCapabilityAndQueueWorker (Capability *from USED_IF_THREADS,
         }
         else
         {
+            nat taskid USED_IF_REPLAY;
+
             debugTrace(DEBUG_sched, "%d spare workers already, exiting",
                        cap->n_spare_workers);
-            releaseCapability_(from,cap,rtsFalse);
+            releaseCapability_(cap,cap,rtsFalse);
+#ifdef REPLAY
+            traceTaskReleaseCap(cap, task);
+#endif
             // hold the lock until after workerTaskStop; c.f. scheduleWorker()
             workerTaskStop(cap, task);
             RELEASE_LOCK(&cap->lock);
@@ -587,8 +633,11 @@ releaseCapabilityAndQueueWorker (Capability *from USED_IF_THREADS,
     }
     // Bound tasks just float around attached to their TSOs.
 
-    releaseCapability_(from,cap,rtsFalse);
+    releaseCapability_(cap,cap,rtsFalse);
 
+#ifdef REPLAY
+    traceTaskReleaseCap(cap, task);
+#endif
     RELEASE_LOCK(&cap->lock);
 }
 #endif
@@ -613,6 +662,13 @@ waitForReturnCapability (Capability **pCap, Task *task)
     *pCap = &MainCapability;
 
 #else
+#if defined(REPLAY)
+    if (replay_enabled) {
+        replayWaitForReturnCapability(pCap, task);
+        return;
+    }
+#endif
+
     Capability *cap = *pCap;
 
     if (cap == NULL) {
@@ -648,9 +704,15 @@ waitForReturnCapability (Capability **pCap, Task *task)
     if (!cap->running_task) {
 	// It's free; just grab it
 	cap->running_task = task;
+#ifdef REPLAY
+        traceTaskAcquireCap(cap, task);
+#endif
 	RELEASE_LOCK(&cap->lock);
     } else {
 	newReturningTask(cap,task);
+#ifdef REPLAY
+        traceTaskReturnCap(task, cap);
+#endif
 	RELEASE_LOCK(&cap->lock);
 
 	for (;;) {
@@ -671,6 +733,9 @@ waitForReturnCapability (Capability **pCap, Task *task)
 		}
 		cap->running_task = task;
 		popReturningTask(cap);
+#ifdef REPLAY
+                traceTaskAcquireCap(cap, task);
+#endif
 		RELEASE_LOCK(&cap->lock);
 		break;
 	    }
@@ -703,6 +768,12 @@ yieldCapability (Capability** pCap, Task *task, rtsBool gcAllowed)
 {
     Capability *cap = *pCap;
 
+#ifdef REPLAY
+    if (replay_enabled) {
+        barf("Called yieldCapability()");
+    }
+#endif
+
     if ((pending_sync == SYNC_GC_PAR) && gcAllowed) {
         traceEventGcStart(cap);
         gcWorkerThread(cap);
@@ -719,7 +790,7 @@ yieldCapability (Capability** pCap, Task *task, rtsBool gcAllowed)
 	// We must now release the capability and wait to be woken up
 	// again.
 	task->wakeup = rtsFalse;
-	releaseCapabilityAndQueueWorker(cap, cap);
+	releaseCapabilityAndQueueWorker(cap);
 
 	for (;;) {
 	    ACQUIRE_LOCK(&task->lock);
@@ -762,7 +833,10 @@ yieldCapability (Capability** pCap, Task *task, rtsBool gcAllowed)
             }
 
             cap->running_task = task;
-	    RELEASE_LOCK(&cap->lock);
+#ifdef REPLAY
+            traceTaskAcquireCap(cap, task);
+#endif
+            RELEASE_LOCK(&cap->lock);
 	    break;
 	}
 
@@ -836,6 +910,12 @@ prodCapability (Capability *cap, Task *task)
 rtsBool
 tryGrabCapability (Capability *cap, Task *task)
 {
+#ifdef REPLAY
+    if (replay_enabled) {
+        return replayTryGrabCapability(cap, task);
+    }
+#endif
+
     if (cap->running_task != NULL) return rtsFalse;
     ACQUIRE_LOCK(&cap->lock);
     if (cap->running_task != NULL) {
@@ -844,6 +924,9 @@ tryGrabCapability (Capability *cap, Task *task)
     }
     task->cap = cap;
     cap->running_task = task;
+#ifdef REPLAY
+    traceTaskAcquireCap(cap, task);
+#endif
     RELEASE_LOCK(&cap->lock);
     return rtsTrue;
 }
@@ -876,6 +959,13 @@ shutdownCapability (Capability *cap USED_IF_THREADS,
 
     task->cap = cap;
 
+#ifdef REPLAY
+    if (replay_enabled) {
+        replayShutdownCapability(cap, task);
+        return;
+    }
+#endif
+
     // Loop indefinitely until all the workers have exited and there
     // are no Haskell threads left.  We used to bail out after 50
     // iterations of this loop, but that occasionally left a worker
@@ -896,6 +986,10 @@ shutdownCapability (Capability *cap USED_IF_THREADS,
 	}
 	cap->running_task = task;
 
+#ifdef REPLAY
+        traceTaskAcquireCap(cap, task);
+#endif
+
         if (cap->spare_workers) {
             // Look for workers that have died without removing
             // themselves from the list; this could happen if the OS
@@ -907,6 +1001,7 @@ shutdownCapability (Capability *cap USED_IF_THREADS,
             prev = NULL;
             for (t = cap->spare_workers; t != NULL; t = t->next) {
                 if (!osThreadIsAlive(t->id)) {
+                    barf("shutdownCapability: dead worker");
                     debugTrace(DEBUG_sched, 
                                "worker thread %p has died unexpectedly", (void *)(size_t)t->id);
                     cap->n_spare_workers--;
@@ -924,6 +1019,9 @@ shutdownCapability (Capability *cap USED_IF_THREADS,
 	    debugTrace(DEBUG_sched, 
 		       "runnable threads or workers still alive, yielding");
 	    releaseCapability_(cap,cap,rtsFalse); // this will wake up a worker
+#ifdef REPLAY
+            traceTaskReleaseCap(cap, task);
+#endif
 	    RELEASE_LOCK(&cap->lock);
 	    yieldThread();
 	    continue;
@@ -936,10 +1034,10 @@ shutdownCapability (Capability *cap USED_IF_THREADS,
         // We can be a bit more relaxed when this is a standalone
         // program that is about to terminate, and let safe=false.
         if (cap->suspended_ccalls && safe) {
+            barf("shutdownCapability: safe suspended calls");
 	    debugTrace(DEBUG_sched, 
 		       "thread(s) are involved in foreign calls, yielding");
             cap->running_task = NULL;
-	    RELEASE_LOCK(&cap->lock);
             // The IO manager thread might have been slow to start up,
             // so the first attempt to kill it might not have
             // succeeded.  Just in case, try again - the kill message
@@ -948,6 +1046,7 @@ shutdownCapability (Capability *cap USED_IF_THREADS,
             // To reproduce this deadlock: run ffi002(threaded1)
             // repeatedly on a loaded machine.
             ioManagerDie();
+	    RELEASE_LOCK(&cap->lock);
             yieldThread();
             continue;
         }
