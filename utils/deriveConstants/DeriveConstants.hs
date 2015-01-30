@@ -350,6 +350,8 @@ wanteds = concat
           ,structField C     "Capability" "interrupt"
           ,structField C     "Capability" "sparks"
           ,structField_ Both "Capability_replay_hp" "Capability" "replay.hp"
+          ,structField_ Both "Capability_replay_hp_adjust" "Capability" "replay.hp_adjust"
+          ,structField_ C    "Capability_replay_hp_alloc" "Capability" "replay.hp_alloc"
           ,structField_ Both "Capability_replay_bd" "Capability" "replay.bd"
 
           ,structField Both "bdescr" "start"

@@ -41,7 +41,6 @@ rtsReplayEnabled(void)
 #define SIZE(bd)    ((bd)->blocks * BLOCK_SIZE_W)
 #define FILLED(bd)  (START_FREE(bd) - START(bd))
 #define FREE(bd)    (END(bd) - START_FREE(bd))
-#define SLOP(bd)    FREE(bd)
 
 #define FULL(bd)    (FILLED(bd) == BLOCK_SIZE_W)
 #define EMPTY(bd)   (FILLED(bd) == 0)
@@ -155,7 +154,7 @@ replaySaveHp(Capability *cap)
 // meant to be called just after running Haskell code (StgRun,
 // suspendThread).
 void
-replaySaveAlloc(Capability *cap, StgThreadReturnCode ret)
+replaySaveAlloc(Capability *cap)
 {
     bdescr *oldBd, *bd, *bd_;
     StgPtr oldHp, hp;
@@ -172,15 +171,15 @@ replaySaveAlloc(Capability *cap, StgThreadReturnCode ret)
 
     // when replaying and only if the thread yielded
     if (cap->replay.hp) {
-        ASSERT(ret == ThreadYielding);
+        ASSERT(cap->r.rRet == ThreadYielding);
         ASSERT(hp == cap->replay.hp);
 
         cap->replay.bd = NULL;
         cap->replay.hp = NULL;
+        cap->replay.hp_alloc = 0;
     }
 
     W_ alloc = 0, n_blocks = 0;
-    W_ slop = 0;
 
     ASSERT(START_FREE(oldBd) >= oldHp);
 
@@ -206,20 +205,10 @@ replaySaveAlloc(Capability *cap, StgThreadReturnCode ret)
     alloc -= oldHp - START(oldBd);
     cap->replay.real_alloc -= oldHp - START(oldBd);
 
-    // stopped just after securing a new block, we need to substract the
-    // slop from the second to last block to get the exact allocation at which
-    // the thread stopped
-    if (ret == ThreadYielding && cap->r.rHpAlloc == 0) {
-        ASSERT(EMPTY(bd_));
-        ASSERT(bd == bd_);
-        ASSERT(last_alloc == 0);
-        slop = SLOP(bd->u.back);
-    }
-
     cap->replay.alloc += alloc;
     cap->replay.blocks += n_blocks;
 
-    traceCapAlloc(cap, cap->replay.alloc - slop, cap->replay.blocks, cap->r.rHpAlloc);
+    traceCapAlloc(cap, cap->replay.alloc, cap->replay.blocks, cap->r.rHpAlloc);
 
     cap->replay.last_bd = NULL;
     cap->replay.last_hp = NULL;
@@ -293,11 +282,10 @@ setupNextEvent(void)
             ASSERT(bd != NULL);
             ASSERT(hp != NULL);
 
-
-            // add the allocated memory from the first block, so the loop counts
-            // full blocks in every iteration, including the first one
+            // add the allocated memory from the first block, so the loop
+            // counts full blocks in every iteration, including the first one
             alloc += hp - START(bd);
-            while (alloc >= SIZE(bd)) {
+            while (blocks > 0) {
                 ASSERT(alloc >= SIZE(bd));
                 alloc -= SIZE(bd);
                 ASSERT(blocks >= bd->blocks);
@@ -305,39 +293,14 @@ setupNextEvent(void)
                 bd = bd->link;
                 ASSERT(bd != NULL);
             }
-            ASSERT(bd);
 
-            // if the allocation is proportional to the block size, the thread
-            // will stop itself to ask for a new block. In the case it is not
-            // or when the thread run for a bit until its first allocation in
-            // the new block, we need to force the thread to stop earlier by
-            // modifying the block start pointer so that it thinks it has less
-            // memory available.
-            if (alloc == 0 && ev->hp_alloc == 0) {
-                ASSERT(blocks == 0);
-                cap->replay.hp = START(bd);
-            } else {
-                cap->replay.bd = bd;
-                //cap->replay.bd_start = bd->start;
-                bd->start += alloc - SIZE(bd); // so that HpLim points to START(bd) + 'alloc'
-                                               // e.g. HpLim = bd->start + SIZE(bd)
-                // allocated a new block before yielding
-                if (blocks == 1) {
-                    bd = bd->link;
-                    cap->replay.hp = START(bd);
-                } else {
-                    ASSERT(blocks == 0);
-                    ASSERT(ev->hp_alloc != 0);
-                    cap->replay.hp = END(bd); // yield when Hp == HpLim == END(bd)
-                    //cap->replay.bd_link = bd->link;
-                    //bd->link = NULL; // to prevent the allocation of a new block
-                }
-            }
+            cap->replay.bd = bd;
+            cap->replay.hp = START(bd) + alloc;
+            cap->replay.hp_alloc = ev->hp_alloc;
 
             // if we have to yield in the current block, set HpLim now
             if (cap->r.rCurrentNursery == bd) {
-                ASSERT(bd == cap->replay.last_bd);
-                cap->r.rHpLim = END(bd);
+                cap->r.rHpLim = cap->replay.hp;
             }
         }
         break;
@@ -498,6 +461,6 @@ void endReplay(void) {}
 void replayPrint(char *s STG_UNUSED, ...) {}
 void replayError(char *s STG_UNUSED, ...) {}
 void replaySaveHp(Capability *cap STG_UNUSED) {}
-void replaySaveAlloc(Capability *cap STG_UNUSED, StgThreadReturnCode ret STG_UNUSED) {}
+void replaySaveAlloc(Capability *cap STG_UNUSED) {}
 void replayEvent(Capability *cap STG_UNUSED, Event *ev STG_UNUSED) {}
 #endif
