@@ -15,6 +15,14 @@
 
 typedef struct _ReplayData {
     StgPtr  hp;         // Hp value when yielding
+    W_      hp_adjust;  // case expressions allocate space for its worst-case
+                        // branch and later deallocate it and allocate the
+                        // real allocation of the branch taken. hp_adjust
+                        // allows to increase HpLim temporarily and remember
+    W_      hp_alloc;   // the adjustment and hp_alloc to check for cases
+                        // where after the worst-case allocation was
+                        // subtracted, the same amount is allocated in smaller
+                        // steps
 
     bdescr *bd;         // To store the block where the thread is forced to stop
 
@@ -33,8 +41,12 @@ void endReplay(void);
 
 void replayPrint(char *s, ...);
 void replayError(char *s, ...);
+#if defined(DEBUG)
+void replayCheckGCGeneric(StgPtr Hp, Capability *cap, StgPtr HpLim, bdescr *CurrentNursery);
+#endif
+
 void replaySaveHp(Capability *cap);
-void replaySaveAlloc(Capability *cap, StgThreadReturnCode ret);
+void replaySaveAlloc(Capability *cap);
 
 void replayEvent(Capability *cap, Event *ev);
 
