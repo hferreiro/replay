@@ -1026,6 +1026,31 @@ void traceCapAlloc_(Capability *cap USED_IF_DEBUG,
         replayEvent(cap, createCapAllocEvent(alloc, blocks, hp_alloc));
     }
 }
+
+#ifdef DEBUG
+void traceCapValue_stderr(Capability *cap,
+                          nat         tag,
+                          W_          value)
+{
+    traceCap_stderr(cap, "tag: %d, value: %" FMT_Word, tag, value);
+}
+#endif
+
+void traceCapValue_(Capability *cap USED_IF_DEBUG,
+                    nat         tag USED_IF_DEBUG,
+                    W_          value USED_IF_DEBUG)
+{
+#ifdef DEBUG
+    if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
+        traceCapValue_stderr(cap, tag, value);
+    } else
+#endif
+    {
+        if (eventlog_enabled) {
+            postCapValueEvent(cap, tag, value);
+        }
+    }
+}
 #endif
 
 #ifdef DEBUG

@@ -439,6 +439,30 @@ replayEvent(Capability *cap, Event *ev)
         }
         break;
     }
+    // set capability variable
+    case EVENT_CAP_VALUE:
+    {
+        EventCapValue *ecv, *ecv_read;
+
+        ecv = (EventCapValue *)ev;
+        ecv_read = (EventCapValue *)read;
+        // ignore value
+        if (ecv->tag != ecv_read->tag) {
+            failedMatch(cap, ev, read);
+        }
+
+        // set the correct value
+        switch (ecv->tag) {
+        case CTXT_SWITCH:
+            ASSERT(ecv_read->value == 0 || ecv_read->value == 1);
+            cap->r.rHpLim = (StgPtr)(W_)!ecv_read->value;
+            cap->context_switch = ecv_read->value;
+            break;
+        default:
+            barf("replayEvent: unknown capability variable in event");
+        }
+        break;
+    }
     default:
         if (!compareEvents(ev, read)) {
             failedMatch(cap, ev, read);

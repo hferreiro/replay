@@ -131,6 +131,7 @@ const char *EventDesc[] = {
   [EVENT_TASK_DELETE]         = "Task delete",
   [EVENT_HACK_BUG_T9003]      = "Empty event for bug #9003",
   [EVENT_CAP_ALLOC]           = "Capability allocation",
+  [EVENT_CAP_VALUE]           = "Capability setting value",
 };
 
 // Event type. 
@@ -553,6 +554,10 @@ initEventType(StgWord8 t)
 
     case EVENT_CAP_ALLOC:
         eventTypes[t].size = sizeof(StgWord64) * 3;
+        break;
+
+    case EVENT_CAP_VALUE:
+        eventTypes[t].size = sizeof(StgWord8) + sizeof(StgWord64);
         break;
 
     default:
@@ -1369,6 +1374,24 @@ void postCapAllocEvent(Capability *cap,
     postWord64(eb, hp_alloc);
 }
 
+void postCapValueEvent(Capability *cap,
+                       nat         tag,
+                       W_          value)
+{
+    EventsBuf *eb;
+
+    eb = &capEventBuf[cap->no];
+
+    if (!hasRoomForEvent(eb, EVENT_CAP_VALUE)) {
+        printAndClearEventBuf(eb);
+    }
+
+    postEventHeader(eb, EVENT_CAP_VALUE);
+
+    postWord8(eb, tag);
+    postWord64(eb, value);
+}
+
 void closeBlockMarker (EventsBuf *ebuf)
 {
     StgInt8* save_pos;
@@ -1990,6 +2013,15 @@ getEvent(ReplayBuf *rb)
         getWord64(rb, &eca->hp_alloc);
 
         ev = (Event *)eca;
+        break;
+    }
+    case EVENT_CAP_VALUE:
+    {
+        EventCapValue *ecv = stgCallocBytes(1, sizeof(EventCapValue), "getEvent");
+        getWord8(rb, &ecv->tag);
+        getWord64(rb, &ecv->value);
+
+        ev = (Event *)ecv;
         break;
     }
     default:

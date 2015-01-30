@@ -165,6 +165,7 @@
 #define EVENT_HACK_BUG_T9003      59 /* Hack: see trac #9003 */
 
 #define EVENT_CAP_ALLOC           60 /* () */
+#define EVENT_CAP_VALUE           61 /* (cap, tag, value) */
 
 /* Range 59 - 59 is available for new GHC and common events. */
 
@@ -181,7 +182,7 @@
  * ranges higher than this are reserved but not currently emitted by ghc.
  * This must match the size of the EventDesc[] array in EventLog.c
  */
-#define NUM_GHC_EVENT_TAGS        61
+#define NUM_GHC_EVENT_TAGS        62
 
 #if 0  /* DEPRECATED EVENTS: */
 /* we don't actually need to record the thread, it's implicit */
@@ -240,6 +241,9 @@ typedef StgWord32 EventCapsetID;
 typedef StgWord16 EventCapsetType;   /* types for EVENT_CAPSET_CREATE */
 typedef StgWord64 EventTaskId;         /* for EVENT_TASK_* */
 typedef StgWord64 EventKernelThreadId; /* for EVENT_TASK_CREATE */
+typedef enum {
+    CTXT_SWITCH = 0,
+} EventCapVar; /* for EVENT_CAP_VALUE */
 
 #endif
 
