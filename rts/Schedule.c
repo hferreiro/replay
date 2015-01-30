@@ -1160,14 +1160,22 @@ scheduleHandleHeapOverflow( Capability *cap, StgTSO *t )
 	}
     }
     
+#ifdef REPLAY
+    if (replay_enabled) {
+        // the value is going to be overwritten anyway
+        replayEvent(cap, createCapValueEvent(CTXT_SWITCH, 0));
+    }
+#endif
     if (cap->r.rHpLim == NULL || cap->context_switch) {
         // Sometimes we miss a context switch, e.g. when calling
         // primitives in a tight loop, MAYBE_GC() doesn't check the
         // context switch flag, and we end up waiting for a GC.
         // See #1984, and concurrent/should_run/1984
+        traceCapValue(cap, CTXT_SWITCH, 1);
         cap->context_switch = 0;
         appendToRunQueue(cap,t);
     } else {
+        traceCapValue(cap, CTXT_SWITCH, 0);
         pushOnRunQueue(cap,t);
     }
     return rtsTrue;
@@ -1205,10 +1213,18 @@ scheduleHandleYield( Capability *cap, StgTSO *t, nat prev_what_next )
     // the CPU because the tick always arrives during GC).  This way
     // penalises threads that do a lot of allocation, but that seems
     // better than the alternative.
+#ifdef REPLAY
+    if (replay_enabled) {
+        // the value is going to be overwritten anyway
+        replayEvent(cap, createCapValueEvent(CTXT_SWITCH, 0));
+    }
+#endif
     if (cap->context_switch != 0) {
+        traceCapValue(cap, CTXT_SWITCH, 1);
         cap->context_switch = 0;
         appendToRunQueue(cap,t);
     } else {
+        traceCapValue(cap, CTXT_SWITCH, 0);
         pushOnRunQueue(cap,t);
     }
 

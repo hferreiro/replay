@@ -159,6 +159,10 @@ void postCapAllocEvent(Capability *cap,
                        W_          blocks,
                        W_          hp_alloc);
 
+void postCapValueEvent(Capability *cap,
+                       nat         tag,
+                       W_          value);
+
 #else /* !TRACING */
 
 INLINE_HEADER void postSchedEvent (Capability *cap  STG_UNUSED,

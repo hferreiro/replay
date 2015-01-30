@@ -79,6 +79,7 @@ static int event_struct_size[NUM_GHC_EVENT_TAGS] = {
     sizeof(EventUserMarker),
     0,                              // 59 EVENT_HACK_BUG_T9003
     sizeof(EventCapAlloc),
+    sizeof(EventCapValue),
 };
 
 rtsBool
@@ -334,6 +335,12 @@ printEvent(Capability *cap USED_IF_DEBUG, Event *ev)
     {
         EventCapAlloc *eca = (EventCapAlloc *)ev;
         traceCapAlloc_stderr(cap, eca->alloc, eca->blocks, eca->hp_alloc);
+        break;
+    }
+    case EVENT_CAP_VALUE:
+    {
+        EventCapValue *ecv = (EventCapValue *)ev;
+        traceCapValue_stderr(cap, ecv->tag, ecv->value);
         break;
     }
     default:
@@ -834,6 +841,18 @@ createCapAllocEvent(W_ alloc, W_ blocks, W_ hp_alloc)
     ev->alloc = alloc;
     ev->blocks = blocks;
     ev->hp_alloc = hp_alloc;
+
+    return (Event *)ev;
+}
+
+Event *
+createCapValueEvent(nat tag, W_ value)
+{
+    EventCapValue *ev;
+
+    ev = (EventCapValue *)createEvent(EVENT_CAP_VALUE);
+    ev->tag = tag;
+    ev->value = value;
 
     return (Event *)ev;
 }

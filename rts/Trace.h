@@ -112,6 +112,9 @@ void traceCapAlloc_stderr(Capability *cap,
                           W_          alloc,
                           W_          blocks,
                           W_          hp_alloc);
+void traceCapValue_stderr(Capability *cap,
+                          nat         tag,
+                          W_          value);
 #endif
 
 #ifdef TRACING
@@ -310,6 +313,7 @@ void traceTaskDelete_ (Task       *task);
  * Events related to Execution Replay
  */
 void traceCapAlloc_ (Capability *cap, W_ alloc, W_ blocks, W_ hp_alloc);
+void traceCapValue_ (Capability *cap, nat tag, W_ value);
 
 #else /* !TRACING */
 
@@ -342,6 +346,7 @@ INLINE_HEADER void traceEventStartup_ (int n_caps STG_UNUSED) {};
 #define traceTaskMigrate_(taskID, cap, new_cap) /* nothing */
 #define traceTaskDelete_(taskID) /* nothing */
 #define traceCapAlloc_(cap, alloc, blocks, hp_alloc) /* nothing */
+#define traceCapValue_(cap, tag, value) /* nothing */
 
 #endif /* TRACING */
 
@@ -918,6 +923,13 @@ INLINE_HEADER void traceCapAlloc(Capability *cap USED_IF_TRACING,
                                  W_          hp_alloc USED_IF_TRACING)
 {
     traceCapAlloc_(cap, alloc, blocks, hp_alloc);
+}
+
+INLINE_HEADER void traceCapValue(Capability *cap USED_IF_TRACING,
+                                 nat         tag USED_IF_TRACING,
+                                 W_          value USED_IF_TRACING)
+{
+    traceCapValue_(cap, tag, value);
 }
 
 #include "EndPrivate.h"
