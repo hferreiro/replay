@@ -240,6 +240,7 @@ initCapability( Capability *cap, nat i )
     cap->run_queue_tl      = END_TSO_QUEUE;
 
     cap->replay.hp         = NULL;
+    cap->replay.hp_adjust  = 0;
     cap->replay.bd         = NULL;
     cap->replay.last_hp    = NULL;
     cap->replay.last_bd    = NULL;

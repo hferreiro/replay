@@ -86,6 +86,7 @@ import LeaveCriticalSection;
 
 #ifdef REPLAY
 #define yield_hp        Capability_replay_hp(MyCapability())
+#define yield_hp_adjust Capability_replay_hp_adjust(MyCapability())
 #define yield_hp_alloc  Capability_replay_hp_alloc(MyCapability())
 #define yield_bd        Capability_replay_bd(MyCapability())
 #endif
@@ -108,7 +109,7 @@ stg_gc_noregs
         }
         if (HpLim == 0 ||
 #ifdef REPLAY
-            (CurrentNursery == yield_bd && Hp == yield_hp)
+            (Hp == yield_hp && HpAlloc == yield_hp_alloc)
 #else
             Capability_context_switch(MyCapability()) != 0 :: CInt ||
             Capability_interrupt(MyCapability())      != 0 :: CInt
@@ -117,6 +118,14 @@ stg_gc_noregs
             ret = ThreadYielding;
             goto sched;
         }
+#ifdef REPLAY
+        if ((Hp <= yield_hp && Hp + HpAlloc > yield_hp)) {
+            HpLim = HpLim + HpAlloc;
+            yield_hp_adjust = HpAlloc;
+            HpAlloc = 0;
+            jump %ENTRY_CODE(Sp(0)) [];
+        }
+#endif
         if (HpAlloc == 0) {
             jump %ENTRY_CODE(Sp(0)) [];
         } else {

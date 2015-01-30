@@ -136,9 +136,17 @@ adjustHpBackwards
               adjust_words = vHp -rHp
         ; new_hp <- getHpRelOffset vHp
 
+        ; dflags <- getDynFlags
+        ; let myCapability = cmmOffset dflags (CmmReg baseReg) (negate $ oFFSET_Capability_r dflags)
+              hp_adjust = cmmOffset dflags myCapability (oFFSET_Capability_replay_hp_adjust dflags)
+              hpLim = CmmGlobal HpLim
+              newLim = cmmOffsetExpr dflags (CmmReg hpLim) (cmmNegate dflags (CmmLoad hp_adjust (bWord dflags)))
+        ; restoreHpLim <- mkCmmIfThen (cmmNeWord dflags hp_adjust (zeroExpr dflags))
+                                      (mkAssign hpLim newLim <*> mkStore hp_adjust (zeroExpr dflags))
         ; emit (if adjust_words == 0
                 then mkNop
-                else mkAssign hpReg new_hp) -- Generates nothing when vHp==rHp
+                else restoreHpLim <*>
+                     mkAssign hpReg new_hp) -- Generates nothing when vHp==rHp
 
         ; tickyAllocHeap False adjust_words -- ...ditto
 

@@ -276,7 +276,7 @@ void traceSchedEvent_ (Capability *cap, EventTypeNum tag,
     if (RtsFlags.TraceFlags.tracing != TRACE_STDERR &&
         tag == EVENT_STOP_THREAD) {
         // after replay because it emits EVENT_CAP_ALLOC
-        replaySaveAlloc(cap, info1);
+        replaySaveAlloc(cap);
     }
 }
 
