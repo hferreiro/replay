@@ -781,6 +781,9 @@ StgPtr allocate (Capability *cap, W_ n)
             if (bd->link != NULL) {
                 bd->link->u.back = cap->r.rCurrentNursery;
             }
+            // HACK: so that that stealing this block will not interfere with
+            // the allocation calculations to stop the thread at replay time
+            traceEventGcGlobalSync(cap);
         }
         dbl_link_onto(bd, &cap->r.rNursery->blocks);
         cap->r.rCurrentAlloc = bd;
@@ -888,6 +891,9 @@ allocatePinned (Capability *cap, W_ n)
                 bd->link->u.back = cap->r.rCurrentNursery;
             }
             cap->r.rNursery->n_blocks -= bd->blocks;
+            // HACK: so that that stealing this block will not interfere with
+            // the allocation calculations to stop the thread at replay time
+            traceEventGcGlobalSync(cap);
         }
 
         cap->pinned_object_block = bd;
