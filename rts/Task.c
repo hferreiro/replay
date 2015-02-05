@@ -382,10 +382,11 @@ discardTasksExcept (Task *keep)
 #if defined(THREADED_RTS)
 
 void
-workerTaskStop (Task *task)
+workerTaskStop (Capability *cap, Task *task)
 {
     DEBUG_ONLY( OSThreadId id );
     DEBUG_ONLY( id = osThreadId() );
+    ASSERT(task->cap == cap);
     ASSERT(task->id == id);
     ASSERT(myTask() == task);
 
@@ -404,7 +405,7 @@ workerTaskStop (Task *task)
 
     RELEASE_LOCK(&all_tasks_mutex);
 
-    traceTaskDelete(task);
+    traceTaskDelete(cap, task);
 
     freeTask(task);
 }

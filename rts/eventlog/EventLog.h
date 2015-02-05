@@ -152,7 +152,8 @@ void postTaskMigrateEvent (EventTaskId taskId,
                            EventCapNo capno,
                            EventCapNo new_capno);
 
-void postTaskDeleteEvent (EventTaskId taskId);
+void postTaskDeleteEvent (Capability  *cap,
+                          EventTaskId  taskId);
 
 void postCapAllocEvent(Capability *cap,
                        W_          alloc,

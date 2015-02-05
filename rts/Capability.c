@@ -576,7 +576,7 @@ releaseCapabilityAndQueueWorker (Capability* cap USED_IF_THREADS)
                        cap->n_spare_workers);
             releaseCapability_(cap,rtsFalse);
             // hold the lock until after workerTaskStop; c.f. scheduleWorker()
-            workerTaskStop(task);
+            workerTaskStop(cap, task);
             RELEASE_LOCK(&cap->lock);
             shutdownThread();
         }

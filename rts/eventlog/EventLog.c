@@ -1203,20 +1203,20 @@ void postTaskMigrateEvent (EventTaskId taskId,
     RELEASE_LOCK(&eventBufMutex);
 }
 
-void postTaskDeleteEvent (EventTaskId taskId)
+void postTaskDeleteEvent (Capability *cap, EventTaskId taskId)
 {
-    ACQUIRE_LOCK(&eventBufMutex);
+    EventsBuf *eb;
 
-    if (!hasRoomForEvent(&eventBuf, EVENT_TASK_DELETE)) {
+    eb = &capEventBuf[cap->no];
+
+    if (!hasRoomForEvent(eb, EVENT_TASK_DELETE)) {
         // Flush event buffer to make room for new event.
-        printAndClearEventBuf(&eventBuf);
+        printAndClearEventBuf(eb);
     }
 
-    postEventHeader(&eventBuf, EVENT_TASK_DELETE);
+    postEventHeader(eb, EVENT_TASK_DELETE);
     /* EVENT_TASK_DELETE (taskID) */
-    postTaskId(&eventBuf, taskId);
-
-    RELEASE_LOCK(&eventBufMutex);
+    postTaskId(eb, taskId);
 }
 
 void

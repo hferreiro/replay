@@ -757,7 +757,7 @@ void traceTaskMigrate_ (Task       *task,
     }
 }
 
-void traceTaskDelete_ (Task *task)
+void traceTaskDelete_ (Capability *cap, Task *task)
 {
     EventTaskId taskid = serialisableTaskId(task);
 
@@ -767,7 +767,7 @@ void traceTaskDelete_ (Task *task)
     } else
 #endif
     {
-        postTaskDeleteEvent(taskid);
+        postTaskDeleteEvent(cap, taskid);
     }
 
     if (replay_enabled) {

@@ -207,7 +207,7 @@ void freeMyTask(void);
 //
 #if defined(THREADED_RTS)
 // In the non-threaded RTS, tasks never stop.
-void workerTaskStop (Task *task);
+void workerTaskStop (Capability *cap, Task *task);
 #endif
 
 // Put the task back on the free list, mark it stopped.  Used by
