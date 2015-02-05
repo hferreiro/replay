@@ -729,7 +729,7 @@ schedulePushWork(Capability *cap USED_IF_THREADS,
                 || cap0->inbox != (Message*)END_TSO_QUEUE) {
 		// it already has some work, we just grabbed it at 
 		// the wrong moment.  Or maybe it's deadlocked!
-		releaseCapability(cap0);
+		releaseCapability(cap, cap0);
 	    } else {
 		free_caps[n_free_caps++] = cap0;
 	    }
@@ -831,7 +831,7 @@ schedulePushWork(Capability *cap USED_IF_THREADS,
 	// release the capabilities
 	for (i = 0; i < n_free_caps; i++) {
 	    task->cap = free_caps[i];
-	    releaseAndWakeupCapability(free_caps[i]);
+	    releaseAndWakeupCapability(cap, free_caps[i]);
 	}
     }
     task->cap = cap; // reset to point to our Capability.
@@ -1441,7 +1441,7 @@ static void releaseAllCapabilities(nat n, Capability *cap, Task *task)
     for (i = 0; i < n; i++) {
         if (cap->no != i) {
             task->cap = capabilities[i];
-            releaseCapability(capabilities[i]);
+            releaseCapability(cap, capabilities[i]);
         }
     }
     task->cap = cap;
@@ -1727,7 +1727,7 @@ delete_threads_and_gc:
                 if (idle_cap[i]) {
                     ASSERT(capabilities[i]->running_task == task);
                     task->cap = capabilities[i];
-                    releaseCapability(capabilities[i]);
+                    releaseCapability(cap, capabilities[i]);
                 } else {
                     ASSERT(capabilities[i]->running_task != task);
                 }
@@ -1848,7 +1848,7 @@ forkProcess(HsStablePtr *entry
         RELEASE_LOCK(&task->lock);
 
         for (i=0; i < n_capabilities; i++) {
-            releaseCapability_(capabilities[i],rtsFalse);
+            releaseCapability_(cap,capabilities[i],rtsFalse);
             RELEASE_LOCK(&capabilities[i]->lock);
         }
 
@@ -1932,7 +1932,7 @@ forkProcess(HsStablePtr *entry
             // the IO manager and running the client action below.
             if (cap->no != 0) {
                 task->cap = cap;
-                releaseCapability(cap);
+                releaseCapability(capabilities[0], cap);
             }
         }
         cap = capabilities[0];
@@ -1951,7 +1951,7 @@ forkProcess(HsStablePtr *entry
 
         // TODO: need to trace various other things in the child
         // like startup event, capabilities, process info etc
-        traceTaskCreate(task, cap);
+        traceTaskCreate(cap, task, cap);
 
 #if defined(THREADED_RTS)
         ioManagerStartCap(&cap);
@@ -2246,7 +2246,7 @@ suspendThread (StgRegTable *reg, rtsBool interruptible)
 
   suspendTask(cap,task);
   cap->in_haskell = rtsFalse;
-  releaseCapability_(cap,rtsFalse);
+  releaseCapability_(cap,cap,rtsFalse);
   
   RELEASE_LOCK(&cap->lock);
 
@@ -2415,7 +2415,7 @@ void scheduleWorker (Capability *cap, Task *task)
     // Capability has been shut down.
     //
     ACQUIRE_LOCK(&cap->lock);
-    releaseCapability_(cap,rtsFalse);
+    releaseCapability_(cap,cap,rtsFalse);
     workerTaskStop(cap, task);
     RELEASE_LOCK(&cap->lock);
 }
@@ -2435,7 +2435,7 @@ startWorkerTasks (nat from USED_IF_THREADS, nat to USED_IF_THREADS)
     for (i = from; i < to; i++) {
         cap = capabilities[i];
         ACQUIRE_LOCK(&cap->lock);
-        startWorkerTask(cap);
+        startWorkerTask(cap, cap);
         RELEASE_LOCK(&cap->lock);
     }
 #endif
@@ -2505,7 +2505,7 @@ exitScheduler (rtsBool wait_foreign USED_IF_THREADS)
         waitForReturnCapability(&cap,task);
         scheduleDoGC(&cap,task,rtsTrue);
         ASSERT(task->incall->tso == NULL);
-        releaseCapability(cap);
+        releaseCapability(cap, cap);
     }
     sched_state = SCHED_SHUTTING_DOWN;
 
@@ -2572,7 +2572,7 @@ performGC_(rtsBool force_major)
 
     waitForReturnCapability(&cap,task);
     scheduleDoGC(&cap,task,force_major);
-    releaseCapability(cap);
+    releaseCapability(cap, cap);
     boundTaskExiting(task);
 }
 

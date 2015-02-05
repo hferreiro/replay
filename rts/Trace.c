@@ -714,11 +714,11 @@ void traceTaskEvent_stderr(EventTypeNum tag, EventTaskId taskid,
 }
 #endif
 
-void traceTaskCreate_ (Task       *task,
-                       Capability *cap)
+void traceTaskCreate_ (Capability *cap,
+                       Task       *task,
+                       EventCapNo  capno)
 {
     EventTaskId taskid = serialisableTaskId(task);
-    EventCapNo capno = cap->no;
 
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
@@ -727,11 +727,11 @@ void traceTaskCreate_ (Task       *task,
 #endif
     {
         EventKernelThreadId tid = kernelThreadId();
-        postTaskCreateEvent(taskid, capno, tid);
+        postTaskCreateEvent(cap, taskid, capno, tid);
     }
 
     if (replay_enabled) {
-        replayEvent(NULL, createTaskCreateEvent(taskid, capno));
+        replayEvent(cap, createTaskCreateEvent(taskid, capno));
     }
 }
 

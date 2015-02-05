@@ -300,8 +300,9 @@ void traceSparkCounters_ (Capability *cap,
                           SparkCounters counters,
                           StgWord remaining);
 
-void traceTaskCreate_ (Task       *task,
-                       Capability *cap);
+void traceTaskCreate_ (Capability *cap,
+                       Task       *task,
+                       EventCapNo  where);
 
 void traceTaskMigrate_ (Task       *task,
                         Capability *cap,
@@ -343,7 +344,7 @@ INLINE_HEADER void traceEventStartup_ (int n_caps STG_UNUSED) {};
 #define traceWallClockTime_() /* nothing */
 #define traceOSProcessInfo_() /* nothing */
 #define traceSparkCounters_(cap, counters, remaining) /* nothing */
-#define traceTaskCreate_(taskID, cap) /* nothing */
+#define traceTaskCreate_(cap, taskID, capno) /* nothing */
 #define traceTaskMigrate_(taskID, cap, new_cap) /* nothing */
 #define traceTaskDelete_(cap, taskID) /* nothing */
 #define traceCapAlloc_(cap, alloc, blocks, hp_alloc) /* nothing */
@@ -875,8 +876,9 @@ INLINE_HEADER void traceEventSparkGC(Capability *cap STG_UNUSED)
     dtraceSparkGc((EventCapNo)cap->no);
 }
 
-INLINE_HEADER void traceTaskCreate(Task       *task STG_UNUSED,
-                                   Capability *cap  STG_UNUSED)
+INLINE_HEADER void traceTaskCreate(Capability *cap STG_UNUSED,
+                                   Task       *task STG_UNUSED,
+                                   Capability *where STG_UNUSED)
 {
     ASSERT(task->cap == cap);
     // TODO: asserting task->cap == NULL would be much stronger
@@ -886,10 +888,10 @@ INLINE_HEADER void traceTaskCreate(Task       *task STG_UNUSED,
     // A new task gets associated with a cap. We also record
     // the kernel thread id of the task, which should never change.
     if (RTS_UNLIKELY(TRACE_sched)) {
-        traceTaskCreate_(task, cap);
+        traceTaskCreate_(cap, task, (EventCapNo)where->no);
     }
     dtraceTaskCreate(serialisableTaskId(task),
-                     (EventCapNo)cap->no,
+                     (EventCapNo)where->no,
                      kernelThreadId());
 }
 
