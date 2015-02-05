@@ -605,14 +605,16 @@ rts_unlock (Capability *cap)
 
     // Finally, we can release the Task to the free list.
     boundTaskExiting(task);
-    RELEASE_LOCK(&cap->lock);
 
     if (task->incall == NULL) {
       // This is the end of an outermost call from C into Haskell land.
       // From here on, the task goes back to C land and we should not count
       // it as doing work on behalf of the RTS.
-      traceTaskDelete(task);
+      traceTaskDelete(cap, task);
     }
+
+    // after task delete
+    RELEASE_LOCK(&cap->lock);
 }
 
 void rts_done (void)

@@ -2416,7 +2416,7 @@ void scheduleWorker (Capability *cap, Task *task)
     //
     ACQUIRE_LOCK(&cap->lock);
     releaseCapability_(cap,rtsFalse);
-    workerTaskStop(task);
+    workerTaskStop(cap, task);
     RELEASE_LOCK(&cap->lock);
 }
 #endif

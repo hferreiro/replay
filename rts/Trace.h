@@ -307,7 +307,8 @@ void traceTaskMigrate_ (Task       *task,
                         Capability *cap,
                         Capability *new_cap);
 
-void traceTaskDelete_ (Task       *task);
+void traceTaskDelete_ (Capability *cap,
+                       Task       *task);
 
 /*
  * Events related to Execution Replay
@@ -344,7 +345,7 @@ INLINE_HEADER void traceEventStartup_ (int n_caps STG_UNUSED) {};
 #define traceSparkCounters_(cap, counters, remaining) /* nothing */
 #define traceTaskCreate_(taskID, cap) /* nothing */
 #define traceTaskMigrate_(taskID, cap, new_cap) /* nothing */
-#define traceTaskDelete_(taskID) /* nothing */
+#define traceTaskDelete_(cap, taskID) /* nothing */
 #define traceCapAlloc_(cap, alloc, blocks, hp_alloc) /* nothing */
 #define traceCapValue_(cap, tag, value) /* nothing */
 
@@ -465,8 +466,8 @@ INLINE_HEADER void dtraceStartup (int num_caps) {
     HASKELLEVENT_TASK_CREATE(taskID, cap, tid)
 #define dtraceTaskMigrate(taskID, cap, new_cap)         \
     HASKELLEVENT_TASK_MIGRATE(taskID, cap, new_cap)
-#define dtraceTaskDelete(taskID)                        \
-    HASKELLEVENT_TASK_DELETE(taskID)
+#define dtraceTaskDelete(cap, taskID)                   \
+    HASKELLEVENT_TASK_DELETE(cap, taskID)
 
 #else /* !defined(DTRACE) */
 
@@ -519,7 +520,7 @@ INLINE_HEADER void dtraceStartup (int num_caps STG_UNUSED) {};
 #define dtraceSparkGc(cap)                              /* nothing */
 #define dtraceTaskCreate(taskID, cap, tid)              /* nothing */
 #define dtraceTaskMigrate(taskID, cap, new_cap)         /* nothing */
-#define dtraceTaskDelete(taskID)                        /* nothing */
+#define dtraceTaskDelete(cap, taskID)                   /* nothing */
 
 #endif
 
@@ -908,13 +909,13 @@ INLINE_HEADER void traceTaskMigrate(Task       *task    STG_UNUSED,
                                                 (EventCapNo)new_cap->no);
 }
 
-INLINE_HEADER void traceTaskDelete(Task *task STG_UNUSED)
+INLINE_HEADER void traceTaskDelete(Capability *cap STG_UNUSED, Task *task STG_UNUSED)
 {
-    ASSERT(task->cap != NULL);
+    ASSERT(task->cap == cap);
     if (RTS_UNLIKELY(TRACE_sched)) {
-        traceTaskDelete_(task);
+        traceTaskDelete_(cap, task);
     }
-    dtraceTaskDelete(serialisableTaskId(task));
+    dtraceTaskDelete(cap, serialisableTaskId(task));
 }
 
 INLINE_HEADER void traceCapAlloc(Capability *cap USED_IF_TRACING,
