@@ -1163,24 +1163,25 @@ void postEventGcStats  (Capability    *cap,
     postWord64(eb, par_tot_copied);
 }
 
-void postTaskCreateEvent (EventTaskId taskId,
+void postTaskCreateEvent (Capability *cap,
+                          EventTaskId taskId,
                           EventCapNo capno,
                           EventKernelThreadId tid)
 {
-    ACQUIRE_LOCK(&eventBufMutex);
+    EventsBuf *eb;
 
-    if (!hasRoomForEvent(&eventBuf, EVENT_TASK_CREATE)) {
+    eb = &capEventBuf[cap->no];
+
+    if (!hasRoomForEvent(eb, EVENT_TASK_CREATE)) {
         // Flush event buffer to make room for new event.
-        printAndClearEventBuf(&eventBuf);
+        printAndClearEventBuf(eb);
     }
 
-    postEventHeader(&eventBuf, EVENT_TASK_CREATE);
+    postEventHeader(eb, EVENT_TASK_CREATE);
     /* EVENT_TASK_CREATE (taskID, cap, tid) */
-    postTaskId(&eventBuf, taskId);
-    postCapNo(&eventBuf, capno);
-    postKernelThreadId(&eventBuf, tid);
-
-    RELEASE_LOCK(&eventBufMutex);
+    postTaskId(eb, taskId);
+    postCapNo(eb, capno);
+    postKernelThreadId(eb, tid);
 }
 
 void postTaskMigrateEvent (EventTaskId taskId,

@@ -226,7 +226,7 @@ INLINE_HEADER Task *myTask (void);
 // will become the running_task for that Capability.
 // Requires: sched_mutex.
 //
-void startWorkerTask (Capability *cap);
+void startWorkerTask (Capability *from, Capability *cap);
 
 // Interrupts a worker task that is performing an FFI call.  The thread
 // should not be destroyed.

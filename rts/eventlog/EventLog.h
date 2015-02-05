@@ -144,8 +144,9 @@ void postEventGcStats  (Capability    *cap,
                         W_           par_max_copied,
                         W_           par_tot_copied);
 
-void postTaskCreateEvent (EventTaskId taskId,
-                          EventCapNo cap,
+void postTaskCreateEvent (Capability *cap,
+                          EventTaskId taskId,
+                          EventCapNo capno,
                           EventKernelThreadId tid);
 
 void postTaskMigrateEvent (EventTaskId taskId,

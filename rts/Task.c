@@ -440,7 +440,7 @@ workerStart(Task *task)
 }
 
 void
-startWorkerTask (Capability *cap)
+startWorkerTask (Capability *from, Capability *cap)
 {
   int r;
   OSThreadId tid;
