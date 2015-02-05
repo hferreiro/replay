@@ -455,7 +455,8 @@ giveCapabilityToTask (Capability *cap USED_IF_DEBUG, Task *task)
 
 #if defined(THREADED_RTS)
 void
-releaseCapability_ (Capability* cap, 
+releaseCapability_ (Capability *from,
+                    Capability *cap,
                     rtsBool always_wakeup)
 {
     Task *task;
@@ -504,7 +505,7 @@ releaseCapability_ (Capability* cap,
 	if (sched_state < SCHED_SHUTTING_DOWN || !emptyRunQueue(cap)) {
 	    debugTrace(DEBUG_sched,
 		       "starting new worker on capability %d", cap->no);
-	    startWorkerTask(cap);
+	    startWorkerTask(from, cap);
 	    return;
 	}
     }
@@ -529,23 +530,26 @@ releaseCapability_ (Capability* cap,
 }
 
 void
-releaseCapability (Capability* cap USED_IF_THREADS)
+releaseCapability (Capability *from USED_IF_THREADS,
+                   Capability* cap USED_IF_THREADS)
 {
     ACQUIRE_LOCK(&cap->lock);
-    releaseCapability_(cap, rtsFalse);
+    releaseCapability_(from, cap, rtsFalse);
     RELEASE_LOCK(&cap->lock);
 }
 
 void
-releaseAndWakeupCapability (Capability* cap USED_IF_THREADS)
+releaseAndWakeupCapability (Capability *from USED_IF_THREADS,
+                            Capability* cap USED_IF_THREADS)
 {
     ACQUIRE_LOCK(&cap->lock);
-    releaseCapability_(cap, rtsTrue);
+    releaseCapability_(from, cap, rtsTrue);
     RELEASE_LOCK(&cap->lock);
 }
 
 static void
-releaseCapabilityAndQueueWorker (Capability* cap USED_IF_THREADS)
+releaseCapabilityAndQueueWorker (Capability *from USED_IF_THREADS,
+                                 Capability* cap USED_IF_THREADS)
 {
     Task *task;
 
@@ -574,7 +578,7 @@ releaseCapabilityAndQueueWorker (Capability* cap USED_IF_THREADS)
         {
             debugTrace(DEBUG_sched, "%d spare workers already, exiting",
                        cap->n_spare_workers);
-            releaseCapability_(cap,rtsFalse);
+            releaseCapability_(from,cap,rtsFalse);
             // hold the lock until after workerTaskStop; c.f. scheduleWorker()
             workerTaskStop(cap, task);
             RELEASE_LOCK(&cap->lock);
@@ -583,7 +587,7 @@ releaseCapabilityAndQueueWorker (Capability* cap USED_IF_THREADS)
     }
     // Bound tasks just float around attached to their TSOs.
 
-    releaseCapability_(cap,rtsFalse);
+    releaseCapability_(from,cap,rtsFalse);
 
     RELEASE_LOCK(&cap->lock);
 }
@@ -715,7 +719,7 @@ yieldCapability (Capability** pCap, Task *task, rtsBool gcAllowed)
 	// We must now release the capability and wait to be woken up
 	// again.
 	task->wakeup = rtsFalse;
-	releaseCapabilityAndQueueWorker(cap);
+	releaseCapabilityAndQueueWorker(cap, cap);
 
 	for (;;) {
 	    ACQUIRE_LOCK(&task->lock);
@@ -817,7 +821,7 @@ prodCapability (Capability *cap, Task *task)
     ACQUIRE_LOCK(&cap->lock);
     if (!cap->running_task) {
         cap->running_task = task;
-        releaseCapability_(cap,rtsTrue);
+        releaseCapability_(cap,cap,rtsTrue);
     }
     RELEASE_LOCK(&cap->lock);
 }
@@ -919,7 +923,7 @@ shutdownCapability (Capability *cap USED_IF_THREADS,
 	if (!emptyRunQueue(cap) || cap->spare_workers) {
 	    debugTrace(DEBUG_sched, 
 		       "runnable threads or workers still alive, yielding");
-	    releaseCapability_(cap,rtsFalse); // this will wake up a worker
+	    releaseCapability_(cap,cap,rtsFalse); // this will wake up a worker
 	    RELEASE_LOCK(&cap->lock);
 	    yieldThread();
 	    continue;

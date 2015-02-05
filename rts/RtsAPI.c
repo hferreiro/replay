@@ -570,7 +570,7 @@ rts_lock (void)
       // This is a new outermost call from C into Haskell land.
       // Until the corresponding call to rts_unlock, this task
       // is doing work on behalf of the RTS.
-      traceTaskCreate(task, cap);
+      traceTaskCreate(cap, task, cap);
     }
 
     return (Capability *)cap;
@@ -601,7 +601,7 @@ rts_unlock (Capability *cap)
     // random point in the future, which causes problems for
     // freeTaskManager().
     ACQUIRE_LOCK(&cap->lock);
-    releaseCapability_(cap,rtsFalse);
+    releaseCapability_(cap,cap,rtsFalse);
 
     // Finally, we can release the Task to the free list.
     boundTaskExiting(task);
