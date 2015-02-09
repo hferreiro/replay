@@ -165,6 +165,10 @@ void postCapValueEvent(Capability *cap,
                        nat         tag,
                        W_          value);
 
+void postTaskAcquireCapEvent(Capability *cap, EventTaskId taskId);
+void postTaskReleaseCapEvent(Capability *cap, EventTaskId taskId);
+void postTaskReturnCapEvent(EventTaskId taskId, EventCapNo capno);
+
 #else /* !TRACING */
 
 INLINE_HEADER void postSchedEvent (Capability *cap  STG_UNUSED,

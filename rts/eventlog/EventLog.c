@@ -132,6 +132,9 @@ const char *EventDesc[] = {
   [EVENT_HACK_BUG_T9003]      = "Empty event for bug #9003",
   [EVENT_CAP_ALLOC]           = "Capability allocation",
   [EVENT_CAP_VALUE]           = "Capability setting value",
+  [EVENT_TASK_ACQUIRE_CAP]    = "Task acquiring capability",
+  [EVENT_TASK_RELEASE_CAP]    = "Task releasing capability",
+  [EVENT_TASK_RETURN_CAP]     = "Task returning to capability",
 };
 
 // Event type. 
@@ -558,6 +561,15 @@ initEventType(StgWord8 t)
 
     case EVENT_CAP_VALUE:
         eventTypes[t].size = sizeof(StgWord8) + sizeof(StgWord64);
+        break;
+
+    case EVENT_TASK_ACQUIRE_CAP:
+    case EVENT_TASK_RELEASE_CAP:
+        eventTypes[t].size = sizeof(EventTaskId);
+        break;
+
+    case EVENT_TASK_RETURN_CAP:
+        eventTypes[t].size = sizeof(EventTaskId) + sizeof(EventCapNo);
         break;
 
     default:
@@ -1393,6 +1405,50 @@ void postCapValueEvent(Capability *cap,
     postWord64(eb, value);
 }
 
+void postTaskAcquireCapEvent(Capability *cap, EventTaskId taskId)
+{
+    EventsBuf *eb;
+
+    eb = &capEventBuf[cap->no];
+
+    if (!hasRoomForEvent(eb, EVENT_TASK_ACQUIRE_CAP)) {
+        printAndClearEventBuf(eb);
+    }
+
+    postEventHeader(eb, EVENT_TASK_ACQUIRE_CAP);
+    postTaskId(eb, taskId);
+}
+
+void postTaskReleaseCapEvent(Capability *cap, EventTaskId taskId)
+{
+    EventsBuf *eb;
+
+    eb = &capEventBuf[cap->no];
+
+    if (!hasRoomForEvent(eb, EVENT_TASK_RELEASE_CAP)) {
+        printAndClearEventBuf(eb);
+    }
+
+    postEventHeader(eb, EVENT_TASK_RELEASE_CAP);
+    postTaskId(eb, taskId);
+}
+
+void postTaskReturnCapEvent(EventTaskId taskId, EventCapNo capno)
+{
+    ACQUIRE_LOCK(&eventBufMutex);
+
+    if (!hasRoomForEvent(&eventBuf, EVENT_TASK_RETURN_CAP)) {
+        // Flush event buffer to make room for new event.
+        printAndClearEventBuf(&eventBuf);
+    }
+
+    postEventHeader(&eventBuf, EVENT_TASK_RETURN_CAP);
+    postTaskId(&eventBuf, taskId);
+    postCapNo(&eventBuf, capno);
+
+    RELEASE_LOCK(&eventBufMutex);
+}
+
 void closeBlockMarker (EventsBuf *ebuf)
 {
     StgInt8* save_pos;
@@ -2023,6 +2079,24 @@ getEvent(ReplayBuf *rb)
         getWord64(rb, &ecv->value);
 
         ev = (Event *)ecv;
+        break;
+    }
+    case EVENT_TASK_ACQUIRE_CAP:
+    case EVENT_TASK_RELEASE_CAP:
+    {
+        EventTaskCap *etc = stgCallocBytes(1, sizeof(EventTaskCap), "getEvent");
+        getTaskId(rb, &etc->task);
+
+        ev = (Event *)etc;
+        break;
+    }
+    case EVENT_TASK_RETURN_CAP:
+    {
+        EventTaskReturnCap *etrc = stgCallocBytes(1, sizeof(EventTaskReturnCap), "getEvent");
+        getTaskId(rb, &etrc->task);
+        getCapNo(rb, &etrc->capno);
+
+        ev = (Event *)etrc;
         break;
     }
     default:

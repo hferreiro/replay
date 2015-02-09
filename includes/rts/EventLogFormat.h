@@ -166,6 +166,9 @@
 
 #define EVENT_CAP_ALLOC           60 /* () */
 #define EVENT_CAP_VALUE           61 /* (cap, tag, value) */
+#define EVENT_TASK_ACQUIRE_CAP    62 /* (taskID) */
+#define EVENT_TASK_RELEASE_CAP    63 /* (taskID) */
+#define EVENT_TASK_RETURN_CAP     64 /* (taskID, cap) */
 
 /* Range 59 - 59 is available for new GHC and common events. */
 
@@ -182,7 +185,7 @@
  * ranges higher than this are reserved but not currently emitted by ghc.
  * This must match the size of the EventDesc[] array in EventLog.c
  */
-#define NUM_GHC_EVENT_TAGS        62
+#define NUM_GHC_EVENT_TAGS        65
 
 #if 0  /* DEPRECATED EVENTS: */
 /* we don't actually need to record the thread, it's implicit */
