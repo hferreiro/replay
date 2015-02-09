@@ -434,7 +434,7 @@ workerStart(Task *task)
     newInCall(task);
 
     // Everything set up; emit the event before the worker starts working.
-    traceTaskCreate(task, cap);
+    traceTaskCreate(cap, task, cap);
 
     scheduleWorker(cap,task);
 }

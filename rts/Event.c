@@ -80,6 +80,9 @@ static int event_struct_size[NUM_GHC_EVENT_TAGS] = {
     0,                              // 59 EVENT_HACK_BUG_T9003
     sizeof(EventCapAlloc),
     sizeof(EventCapValue),
+    sizeof(EventTaskAcquireCap),
+    sizeof(EventTaskReleaseCap),
+    sizeof(EventTaskReturnCap),
 };
 
 rtsBool
@@ -341,6 +344,19 @@ printEvent(Capability *cap USED_IF_DEBUG, Event *ev)
     {
         EventCapValue *ecv = (EventCapValue *)ev;
         traceCapValue_stderr(cap, ecv->tag, ecv->value);
+        break;
+    }
+    case EVENT_TASK_ACQUIRE_CAP:
+    case EVENT_TASK_RELEASE_CAP:
+    {
+        EventTaskCap *etc = (EventTaskCap *)ev;
+        traceTaskCap_stderr(cap, tag, etc->task);
+        break;
+    }
+    case EVENT_TASK_RETURN_CAP:
+    {
+        EventTaskReturnCap *etrc = (EventTaskReturnCap *)ev;
+        traceTaskCap_stderr(capabilities[etrc->capno], tag, etrc->task);
         break;
     }
     default:
@@ -853,6 +869,40 @@ createCapValueEvent(nat tag, W_ value)
     ev = (EventCapValue *)createEvent(EVENT_CAP_VALUE);
     ev->tag = tag;
     ev->value = value;
+
+    return (Event *)ev;
+}
+
+Event *
+createTaskAcquireCapEvent(EventTaskId taskId)
+{
+    EventTaskAcquireCap *ev;
+
+    ev = (EventTaskAcquireCap *)createEvent(EVENT_TASK_ACQUIRE_CAP);
+    ev->task = taskId;
+
+    return (Event *)ev;
+}
+
+Event *
+createTaskReleaseCapEvent(EventTaskId taskId)
+{
+    EventTaskReleaseCap *ev;
+
+    ev = (EventTaskReleaseCap *)createEvent(EVENT_TASK_RELEASE_CAP);
+    ev->task = taskId;
+
+    return (Event *)ev;
+}
+
+Event *
+createTaskReturnCapEvent(EventTaskId taskId, EventCapNo capno)
+{
+    EventTaskReturnCap *ev;
+
+    ev = (EventTaskReturnCap *)createEvent(EVENT_TASK_RETURN_CAP);
+    ev->task = taskId;
+    ev->capno = capno;
 
     return (Event *)ev;
 }

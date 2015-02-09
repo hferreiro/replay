@@ -115,6 +115,9 @@ void traceCapAlloc_stderr(Capability *cap,
 void traceCapValue_stderr(Capability *cap,
                           nat         tag,
                           W_          value);
+void traceTaskCap_stderr(Capability *cap,
+                         EventTypeNum tag,
+                         EventTaskId taskid);
 #endif
 
 #ifdef TRACING
@@ -316,6 +319,9 @@ void traceTaskDelete_ (Capability *cap,
  */
 void traceCapAlloc_ (Capability *cap, W_ alloc, W_ blocks, W_ hp_alloc);
 void traceCapValue_ (Capability *cap, nat tag, W_ value);
+void traceTaskAcquireCap_(Capability *cap, Task *task);
+void traceTaskReleaseCap_(Capability *cap, Task *task);
+void traceTaskReturnCap_(Task *task, Capability *cap);
 
 #else /* !TRACING */
 
@@ -349,6 +355,9 @@ INLINE_HEADER void traceEventStartup_ (int n_caps STG_UNUSED) {};
 #define traceTaskDelete_(cap, taskID) /* nothing */
 #define traceCapAlloc_(cap, alloc, blocks, hp_alloc) /* nothing */
 #define traceCapValue_(cap, tag, value) /* nothing */
+#define traceTaskAcquireCap_(cap, task) /* nothing */
+#define traceTaskReleaseCap_(cap, task) /* nothing */
+#define traceTaskReturnCap_(task, cap) /* nothing */
 
 #endif /* TRACING */
 
@@ -933,6 +942,33 @@ INLINE_HEADER void traceCapValue(Capability *cap USED_IF_TRACING,
                                  W_          value USED_IF_TRACING)
 {
     traceCapValue_(cap, tag, value);
+}
+
+INLINE_HEADER void traceTaskAcquireCap (Capability *cap USED_IF_TRACING,
+                                        Task       *task USED_IF_TRACING)
+{
+    ASSERT(cap->running_task == task);
+    if (RTS_UNLIKELY(TRACE_sched)) {
+        traceTaskAcquireCap_(cap, task);
+    }
+}
+
+INLINE_HEADER void traceTaskReleaseCap (Capability *cap USED_IF_TRACING,
+                                        Task       *task USED_IF_TRACING)
+{
+    ASSERT(cap->running_task != task);
+    if (RTS_UNLIKELY(TRACE_sched)) {
+        traceTaskReleaseCap_(cap, task);
+    }
+}
+
+INLINE_HEADER void traceTaskReturnCap (Task       *task USED_IF_TRACING,
+                                       Capability *cap USED_IF_TRACING)
+{
+    ASSERT(task->cap == cap);
+    if (RTS_UNLIKELY(TRACE_sched)) {
+        traceTaskReturnCap_(task, cap);
+    }
 }
 
 #include "EndPrivate.h"
