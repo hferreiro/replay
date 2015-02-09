@@ -232,6 +232,20 @@ typedef struct _EventCapValue {
     StgWord64   value;
 } EventCapValue;
 
+typedef struct _EventTaskCap {
+    EventHeader header;
+    EventTaskId task;
+} EventTaskCap;
+
+typedef struct _EventTaskCap EventTaskAcquireCap;
+typedef struct _EventTaskCap EventTaskReleaseCap;
+
+typedef struct _EventTaskReturnCap {
+    EventHeader header;
+    EventTaskId task;
+    EventCapNo  capno;
+} EventTaskReturnCap;
+
 rtsBool isVariableSizeEvent(EventTypeNum tag);
 int eventSize(Event *ev);
 void printEvent(Capability *cap, Event *ev);
@@ -284,6 +298,9 @@ Event *createTaskDeleteEvent(EventTaskId taskId);
 Event *createUserMarkerEvent(const char *markername);
 Event *createCapAllocEvent(W_ alloc, W_ blocks, W_ hpAlloc);
 Event *createCapValueEvent(nat tag, W_ value);
+Event *createTaskAcquireCapEvent(EventTaskId taskId);
+Event *createTaskReleaseCapEvent(EventTaskId taskId);
+Event *createTaskReturnCapEvent(EventTaskId taskId, EventCapNo capno);
 
 #endif
 

@@ -1051,6 +1051,92 @@ void traceCapValue_(Capability *cap USED_IF_DEBUG,
         }
     }
 }
+
+#ifdef DEBUG
+void traceTaskCap_stderr(Capability *cap,
+                         EventTypeNum tag,
+                         EventTaskId taskid)
+{
+    ACQUIRE_LOCK(&trace_utx);
+
+    tracePreface();
+    switch (tag) {
+    case EVENT_TASK_ACQUIRE_CAP:
+        debugBelch("task %" FMT_Word64 " acquiring cap %d\n", taskid, cap->no);
+        break;
+    case EVENT_TASK_RELEASE_CAP:
+        debugBelch("task %" FMT_Word64 " releasing cap %d\n", taskid, cap->no);
+        break;
+    case EVENT_TASK_RETURN_CAP:
+        debugBelch("task %" FMT_Word64 " returning to cap %d\n", taskid, cap->no);
+        break;
+    default:
+        barf("traceTaskCap_stderr: unknown 'task cap' event tag %d", tag);
+    }
+
+    RELEASE_LOCK(&trace_utx);
+}
+#endif
+
+void traceTaskAcquireCap_(Capability *cap, Task *task)
+{
+    EventTaskId taskid = serialisableTaskId(task);
+
+#ifdef DEBUG
+    if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
+        traceTaskCap_stderr(cap, EVENT_TASK_ACQUIRE_CAP, taskid);
+    } else
+#endif
+    {
+        if (eventlog_enabled) {
+            postTaskAcquireCapEvent(cap, taskid);
+        }
+    }
+
+    if (replay_enabled) {
+        replayEvent(cap, createTaskAcquireCapEvent(taskid));
+    }
+}
+
+void traceTaskReleaseCap_(Capability *cap, Task *task)
+{
+    EventTaskId taskid = serialisableTaskId(task);
+
+#ifdef DEBUG
+    if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
+        traceTaskCap_stderr(cap, EVENT_TASK_RELEASE_CAP, taskid);
+    } else
+#endif
+    {
+        if (eventlog_enabled) {
+            postTaskReleaseCapEvent(cap, taskid);
+        }
+    }
+
+    if (replay_enabled) {
+        replayEvent(cap, createTaskReleaseCapEvent(taskid));
+    }
+}
+
+void traceTaskReturnCap_(Task *task, Capability *cap)
+{
+    EventTaskId taskid = serialisableTaskId(task);
+
+#ifdef DEBUG
+    if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
+        traceTaskCap_stderr(cap, EVENT_TASK_RETURN_CAP, taskid);
+    } else
+#endif
+    {
+        if (eventlog_enabled) {
+            postTaskReturnCapEvent(taskid, cap->no);
+        }
+    }
+
+    if (replay_enabled) {
+        replayEvent(NULL, createTaskReturnCapEvent(taskid, cap->no));
+    }
+}
 #endif
 
 #ifdef DEBUG
