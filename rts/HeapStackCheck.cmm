@@ -132,6 +132,12 @@ stg_gc_noregs
             goto sched;
         }
     } else {
+#ifdef REPLAY
+        if (Hp == yield_hp) {
+            ret = ThreadYielding;
+            goto sched;
+        }
+#endif
         if (CHECK_GC()) {
             ret = HeapOverflow;
         } else {
