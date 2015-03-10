@@ -16,6 +16,7 @@
 #include "RtsUtils.h"
 #include "EventLog.h"
 #include "Event.h"
+#include "Hash.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -2346,6 +2347,22 @@ peekEventCap(nat n, int capno)
 }
 
 CapEvent *
+searchEventCap(int capno, nat tag)
+{
+    nat n = 0;
+    CapEvent *ce;
+
+    ASSERT(tag < NUM_GHC_EVENT_TAGS);
+    do {
+        ce = peekEventCap(n++, capno);
+        if (ce == NULL) {
+            return NULL;
+        }
+    } while (ce->ev->header.tag != tag);
+    return ce;
+}
+
+CapEvent *
 searchEventTagValueBefore(nat tag, W_ value, nat last)
 {
     nat n = 0;
@@ -2359,8 +2376,53 @@ searchEventTagValueBefore(nat tag, W_ value, nat last)
         if (ce == NULL || ce->ev->header.tag == last) {
             return NULL;
         }
-    } while (!compareEvents(ce->ev, ev));
+    } while (!equalEvents(ce->ev, ev));
     return ce;
+}
+
+// cache whether a 'blackhole event' for a particular id was seen before next
+// GC
+static HashTable *cached_blackhole_events;
+static EventTimestamp cached_last_gc;
+
+rtsBool
+existsBlackHoleEventBeforeGC(W_ value)
+{
+    nat n;
+    W_ tag;
+    CapEvent *ce;
+
+    ce = readEvent();
+    if (cached_blackhole_events != NULL &&
+        ce->ev->header.time > cached_last_gc) {
+        freeHashTable(cached_blackhole_events, NULL);
+        cached_blackhole_events = NULL;
+    }
+
+    if (cached_blackhole_events == NULL) {
+        cached_blackhole_events = allocHashTable();
+
+        for (n = 0; (ce = peekEvent(n)) != NULL &&
+                    ce->ev->header.tag != EVENT_GC_START; n++) {
+            tag = ((EventCapValue *)ce->ev)->tag;
+            if (ce->ev->header.tag == EVENT_CAP_VALUE &&
+                (tag == SPARK_RUN || tag == SPARK_STEAL ||
+                 tag == MSG_BLACKHOLE || tag == THUNK_WHNF ||
+                 tag == THUNK_UPDATED)) {
+                insertHashTable(cached_blackhole_events,
+                                ((EventCapValue *)ce->ev)->value,
+                                (void *)rtsTrue);
+            }
+        }
+
+        if (ce != NULL) {
+            ASSERT(ce->ev->header.tag == EVENT_GC_START);
+            cached_last_gc = ce->ev->header.time;
+        } else {
+            cached_last_gc = HS_WORD64_MAX;
+        }
+    }
+    return lookupHashTable(cached_blackhole_events, value) != NULL;
 }
 
 // Returns the current event.

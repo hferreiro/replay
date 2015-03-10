@@ -32,6 +32,10 @@ typedef struct WSDeque_ {
 
     // The elements array
     void ** elements;
+#ifdef REPLAY
+    // The ids array
+    int *ids;
+#endif
 
     //  Please note: the dataspace cannot follow the admin fields
     //  immediately, as it should be possible to enlarge it without
@@ -77,6 +81,9 @@ void* popWSDeque (WSDeque *q);
 // Push onto the "write" end of the pool.  Return true if the push
 // succeeded, or false if the deque is full.
 rtsBool pushWSDeque (WSDeque *q, void *elem);
+#ifdef REPLAY
+rtsBool pushWSDequeId (WSDeque *q, void *elem, int *id);
+#endif
 
 // Removes all elements from the deque
 EXTERN_INLINE void discardElements (WSDeque *q);
@@ -85,6 +92,9 @@ EXTERN_INLINE void discardElements (WSDeque *q);
 // NULL if the pool is empty, or if there was a collision with another
 // thief.
 void * stealWSDeque_ (WSDeque *q);
+#ifdef REPLAY
+void * stealWSDequeId_ (WSDeque *q, int *id);
+#endif
 
 // Removes an element of the deque from the "read" end, or returns
 // NULL if the pool is empty.

@@ -58,19 +58,42 @@ newSpark (StgRegTable *reg, StgClosure *p)
 {
     Capability *cap = regTableToCapability(reg);
     SparkPool *pool = cap->sparks;
+#ifdef REPLAY
+    int id;
 
+    id = newSparkId(cap);
+#endif
     if (!fizzledSpark(p)) {
+#ifdef REPLAY
+        if (pushWSDequeId(pool,p,&id)) {
+#else
         if (pushWSDeque(pool,p)) {
+#endif
             cap->spark_stats.created++;
+#ifdef REPLAY
+            if (replay_enabled) {
+                replaySaveSpark(NULL, p, id);
+            }
+            replayTraceCapValue(cap, SPARK_CREATE, id);
+#else
             traceEventSparkCreate(cap);
+#endif
         } else {
             /* overflowing the spark pool */
             cap->spark_stats.overflowed++;
+#ifdef REPLAY
+            replayTraceCapValue(cap, SPARK_OVERFLOW, id);
+#else
             traceEventSparkOverflow(cap);
+#endif
 	}
     } else {
         cap->spark_stats.dud++;
+#ifdef REPLAY
+        replayTraceCapValue(cap, SPARK_DUD, id);
+#else
         traceEventSparkDud(cap);
+#endif
     }
 
     return 1;
@@ -88,6 +111,9 @@ pruneSparkQueue (Capability *cap)
 { 
     SparkPool *pool;
     StgClosurePtr spark, tmp, *elements;
+#ifdef REPLAY
+    int id, *ids;
+#endif
     nat n, pruned_sparks; // stats only
     StgWord botInd,oldBotInd,currInd; // indices in array (always < size)
     const StgInfoTable *info;
@@ -117,6 +143,9 @@ pruneSparkQueue (Capability *cap)
     ASSERT_WSDEQUE_INVARIANTS(pool);
 
     elements = (StgClosurePtr *)pool->elements;
+#ifdef REPLAY
+    ids = pool->ids;
+#endif
 
     /* We have exclusive access to the structure here, so we can reset
        bottom and top counters, and prune invalid sparks. Contents are
@@ -164,6 +193,9 @@ pruneSparkQueue (Capability *cap)
       /* check element at currInd. if valuable, evacuate and move to
 	 botInd, otherwise move on */
       spark = elements[currInd];
+#ifdef REPLAY
+      id = ids[currInd];
+#endif
 
       // We have to be careful here: in the parallel GC, another
       // thread might evacuate this closure while we're looking at it,
@@ -177,7 +209,11 @@ pruneSparkQueue (Capability *cap)
           // robustness.
           pruned_sparks++;
           cap->spark_stats.fizzled++;
+#ifdef REPLAY
+          replayTraceCapValue(cap, SPARK_FIZZLE, id);
+#else
           traceEventSparkFizzle(cap);
+#endif
       } else {
           info = spark->header.info;
           if (IS_FORWARDING_PTR(info)) {
@@ -185,44 +221,82 @@ pruneSparkQueue (Capability *cap)
               /* if valuable work: shift inside the pool */
               if (closure_SHOULD_SPARK(tmp)) {
                   elements[botInd] = tmp; // keep entry (new address)
+#ifdef REPLAY
+                  ids[botInd] = id;
+                  if (replay_enabled) {
+                      replayPromoteSpark(tmp, id);
+                  }
+#endif
                   botInd++;
                   n++;
               } else {
                   pruned_sparks++; // discard spark
                   cap->spark_stats.fizzled++;
+#ifdef REPLAY
+                  replayTraceCapValue(cap, SPARK_FIZZLE, id);
+#else
                   traceEventSparkFizzle(cap);
+#endif
               }
           } else if (HEAP_ALLOCED(spark)) {
               if ((Bdescr((P_)spark)->flags & BF_EVACUATED)) {
                   if (closure_SHOULD_SPARK(spark)) {
                       elements[botInd] = spark; // keep entry (new address)
+#ifdef REPLAY
+                      ids[botInd] = id;
+                      if (replay_enabled) {
+                          replayPromoteSpark(spark, id);
+                      }
+#endif
                       botInd++;
                       n++;
                   } else {
                       pruned_sparks++; // discard spark
                       cap->spark_stats.fizzled++;
+#ifdef REPLAY
+                      replayTraceCapValue(cap, SPARK_FIZZLE, id);
+#else
                       traceEventSparkFizzle(cap);
+#endif
                   }
               } else {
                   pruned_sparks++; // discard spark
                   cap->spark_stats.gcd++;
+#ifdef REPLAY
+                  replayTraceCapValue(cap, SPARK_GC, id);
+#else
                   traceEventSparkGC(cap);
+#endif
               }
           } else {
               if (INFO_PTR_TO_STRUCT(info)->type == THUNK_STATIC) {
                   if (*THUNK_STATIC_LINK(spark) != NULL) {
                       elements[botInd] = spark; // keep entry (new address)
+#ifdef REPLAY
+                      ids[botInd] = id;
+                      if (replay_enabled) {
+                          replayPromoteSpark(spark, id);
+                      }
+#endif
                       botInd++;
                       n++;
                   } else {
                       pruned_sparks++; // discard spark
                       cap->spark_stats.gcd++;
+#ifdef REPLAY
+                      replayTraceCapValue(cap, SPARK_GC, id);
+#else
                       traceEventSparkGC(cap);
+#endif
                   }
               } else {
                   pruned_sparks++; // discard spark
                   cap->spark_stats.fizzled++;
+#ifdef REPLAY
+                  replayTraceCapValue(cap, SPARK_FIZZLE, id);
+#else
                   traceEventSparkFizzle(cap);
+#endif
               }
           }
       }

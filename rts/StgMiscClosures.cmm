@@ -306,14 +306,38 @@ INFO_TABLE(stg_IND_PERM,1,0,IND_PERM,"IND_PERM","IND_PERM")
 INFO_TABLE(stg_BLACKHOLE,1,0,BLACKHOLE,"BLACKHOLE","BLACKHOLE")
     (P_ node)
 {
-    W_ r, info, owner, bd;
-    P_ p, bq, msg;
+    W_ r, info;
+    P_ p, msg;
 
     TICK_ENT_DYN_IND(); /* tick */
 
 retry:
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+    if (CInt[replay_enabled] == 1 :: CInt) {
+        (p) = ccall replayBlackHole(CurrentTSO "ptr", node "ptr");
+        if (p == 0) {
+            goto block;
+        } else {
+            if (p == 1) {
+                ccall replayThunkUpdated(CurrentTSO "ptr", node "ptr", 1);
+                return (StgInd_indirectee(node));
+            } else {
+                if (StgHeader_info(node) == stg_BLACKHOLE_info) {
+                    ccall replayThunkUpdated(CurrentTSO "ptr", node "ptr", 0);
+                } // otherwise, first thread entering the thunk, see newSpark
+                  // for artificial blackholing
+                ENTER(p);
+            }
+        }
+    }
+#endif
+
     p = StgInd_indirectee(node);
     if (GETTAG(p) != 0) {
+#if defined(REPLAY) && defined(THREADED_RTS)
+        ccall replayThunkUpdated(CurrentTSO "ptr", node "ptr", 1);
+#endif
         return (p);
     }
 
@@ -329,6 +353,10 @@ retry:
         info == stg_BLOCKING_QUEUE_CLEAN_info ||
         info == stg_BLOCKING_QUEUE_DIRTY_info)
     {
+block:
+#if defined(REPLAY) && defined(THREADED_RTS)
+        ("ptr" msg) = ccall replayMessageBlackHole(CurrentTSO "ptr", node "ptr");
+#else
         ("ptr" msg) = ccall allocate(MyCapability() "ptr",
                                      BYTES_TO_WDS(SIZEOF_MessageBlackHole));
 
@@ -337,8 +365,13 @@ retry:
         MessageBlackHole_bh(msg) = node;
 
         (r) = ccall messageBlackHole(MyCapability() "ptr", msg "ptr");
+#endif
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+        if (msg == 0) {
+#else
         if (r == 0) {
+#endif
             goto retry;
         } else {
             StgTSO_why_blocked(CurrentTSO) = BlockedOnBlackHole::I16;
@@ -348,6 +381,9 @@ retry:
     }
     else
     {
+#if defined(REPLAY) && defined(THREADED_RTS)
+        ccall replayThunkUpdated(CurrentTSO "ptr", node "ptr", 0);
+#endif
         ENTER(p);
     }
 }

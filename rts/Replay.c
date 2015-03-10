@@ -12,13 +12,16 @@
 #include "eventlog/EventLog.h"
 #include "Capability.h"
 #include "Event.h"
+#include "Hash.h"
 #include "Messages.h"
 #include "RtsFlags.h"
 #include "RtsUtils.h"
 #include "Schedule.h"
+#include "Task.h"
 #include "Trace.h"
 #include "Replay.h"
 
+#include <math.h>
 #include <string.h>
 
 #define _ptr(p) ((void *)((StgWord)(p) & 0x0fffff))
@@ -49,6 +52,11 @@ static Semaphore no_task;
 static Semaphore **task_replay;
 
 static Task **running_tasks; // owner task for each capability
+
+// When replaying, store an id -> StgThunk mapping for every spark. Additionally,
+// it stores a pointer -> id mapping which is updated during GC (TODO)
+HashTable *spark_ids;
+HashTable *gc_spark_ids;
 
 static Task *findTask(nat no);
 
@@ -102,6 +110,8 @@ initReplay(void)
         for (r = 0; r < (int)RtsFlags.ParFlags.nNodes; r++) {
             running_tasks[r] = NULL;
         }
+
+        spark_ids = allocHashTable();
 #endif
     }
 }
@@ -125,6 +135,8 @@ endReplay(void)
         closeSemaphore(&replay_sched);
 
         stgFree(running_tasks);
+
+        freeHashTable(spark_ids, stgFree);
 #endif
     }
 }
@@ -272,35 +284,29 @@ failedMatch(Capability *cap, Event *ev, Event *read)
     barf("replay: '%s' events did not match", EventDesc[ev->header.tag]);
 }
 
-rtsBool
-compareEvents(Event *ev, Event *read)
-{
-    ASSERT(ev);
-    ASSERT(read);
-    ASSERT(ev->header.tag == read->header.tag);
-
-    rtsBool r = rtsTrue;
-
-    if ((isVariableSizeEvent(ev->header.tag)
-            && eventSize(ev) != eventSize(read)) ||
-        (memcmp((StgWord8 *)ev + sizeof(EventHeader),
-                (StgWord8 *)read + sizeof(EventHeader),
-                eventSize(ev) - sizeof(EventHeader)) != 0)) {
-        r = rtsFalse;
-    }
-
-    return r;
-}
-
 static void
 setupNextEvent(void)
 {
     CapEvent *ce;
+    int next = 1;
 
     ce = readEvent();
     if (ce == NULL) {
         return;
     }
+
+#ifdef THREADED_RTS
+    // these events happen once the thread has already stopped, but before
+    // 'stop thread'
+    while (isEventCapValue(ce, SUSPEND_COMPUTATION)) {
+        ce = peekEventCap(next++, ce->capno);
+        ASSERT(ce != NULL);
+        while (isEventCapValue(ce, STEAL_BLOCK)) {
+            ce = peekEventCap(next++, ce->capno);
+            ASSERT(ce != NULL);
+        }
+    }
+#endif
 
     switch(ce->ev->header.tag) {
     case EVENT_STOP_THREAD:
@@ -313,7 +319,7 @@ setupNextEvent(void)
             Capability *cap;
             EventCapAlloc *ev;
 
-            ce = peekEventCap(1, ce->capno);
+            ce = peekEventCap(next, ce->capno);
             ASSERT(ce != NULL);
             ev = (EventCapAlloc *)ce->ev;
             ASSERT(ev->header.tag == EVENT_CAP_ALLOC);
@@ -360,6 +366,30 @@ setupNextEvent(void)
 
 //extern char **environ;
 
+#ifdef THREADED_RTS
+// task needs the task running in cap to perform some computation before being
+// able to continue
+static void
+replaySync_(Capability *cap, Task *task)
+{
+    ASSERT(cap->running_task != NULL);
+    ASSERT(cap->replay.sync_task == NULL);
+    cap->replay.sync_task = task;
+    signalSemaphore(task_replay[cap->running_task->no]);
+    waitSemaphore(task_replay[task->no]);
+    cap->replay.sync_task = NULL;
+}
+
+static void
+replayCont_(Capability *cap, Task *task)
+{
+    if (cap->replay.sync_task != NULL) {
+        signalSemaphore(task_replay[cap->replay.sync_task->no]);
+        waitSemaphore(task_replay[task->no]);
+    }
+}
+#endif
+
 void
 replayEvent(Capability *cap, Event *ev)
 {
@@ -370,6 +400,11 @@ replayEvent(Capability *cap, Event *ev)
     nat tag;
 
 #ifdef THREADED_RTS
+    // we may have reached here to synchronise with another task,
+    // in that case, return the control to that task
+    if (cap != NULL && cap->running_task != NULL) {
+        replayCont_(cap, cap->running_task);
+    }
 #endif
 
     ce = readEvent();
@@ -501,7 +536,7 @@ replayEvent(Capability *cap, Event *ev)
     {
         Task *task USED_IF_THREADS;
 
-        if (!compareEvents(ev, read)) {
+        if (!equalEvents(ev, read)) {
             failedMatch(cap, ev, read);
         }
 
@@ -558,7 +593,7 @@ replayEvent(Capability *cap, Event *ev)
             ;
         }
 
-        if (!compareEvents(ev, read)) {
+        if (!equalEvents(ev, read)) {
             failedMatch(cap, ev, read);
         }
 
@@ -570,7 +605,7 @@ replayEvent(Capability *cap, Event *ev)
     {
         Task *task;
 
-        if (!compareEvents(ev, read)) {
+        if (!equalEvents(ev, read)) {
             failedMatch(cap, ev, read);
         }
 
@@ -589,7 +624,7 @@ replayEvent(Capability *cap, Event *ev)
     }
 #endif
     default:
-        if (!compareEvents(ev, read)) {
+        if (!equalEvents(ev, read)) {
             failedMatch(cap, ev, read);
         }
         break;
@@ -751,6 +786,236 @@ isEventCapValue(CapEvent *ce, int tag)
 }
 
 #ifdef THREADED_RTS
+static Capability *
+eventSparkCap(CapEvent *ce)
+{
+    EventCapValue *ev;
+    nat capno;
+
+    ASSERT(ce != NULL);
+    ev = (EventCapValue *)ce->ev;
+    ASSERT(ev->header.tag == EVENT_CAP_VALUE);
+    ASSERT(ev->tag == SPARK_FIZZLE || ev->tag == SPARK_STEAL ||
+           ev->tag == SUSPEND_COMPUTATION);
+
+    capno = capSparkId(ev->value);
+    ASSERT(capno < n_capabilities);
+    return capabilities[capno];
+}
+
+#define swap(x,y)           \
+    do {                    \
+        typeof(x) _x = x;   \
+        typeof(y) _y = y;   \
+        x = _y;             \
+        y = _x;             \
+    } while(0)
+
+static StgClosure *
+replayStealSpark_(Capability *cap, int id)
+{
+    CapEvent *ce USED_IF_DEBUG;
+    int id_;
+    SparkPool *pool;
+    StgClosure *spark;
+
+    pool = cap->sparks;
+    if (sparkPoolSize(pool) == 0) {
+#ifdef DEBUG
+        // TODO: may need to replay a few events to get to SPARK_CREATE
+        ce = peekEventCap(0, cap->no);
+        ASSERT(isEventCapValue(ce, SPARK_CREATE));
+#endif
+        replaySync_(cap, myTask());
+    }
+    ASSERT(sparkPoolSize(pool) > 0);
+
+    if (pool->ids[pool->top & pool->moduloSize] != id) {
+        int idx, idx1, size;
+
+        ASSERT(sparkPoolSize(pool) > 1);
+
+        // find the right spark
+        size = sparkPoolSize(pool);
+        do {
+            idx = (pool->top + size-1) & pool->moduloSize;
+            size--;
+        } while (pool->ids[idx] != id && size > 1);
+        ASSERT(pool->ids[idx] == id);
+
+        // swap sparks
+        while (size > 0) {
+            idx1 = idx;
+            idx = (pool->top + size-1) & pool->moduloSize;
+            swap(pool->elements[idx], pool->elements[idx1]);
+            swap(pool->ids[idx], pool->ids[idx1]);
+            size--;
+        }
+    }
+
+    spark = tryStealSpark(cap->sparks, &id_);
+    ASSERT(id_ == id);
+    return spark;
+}
+
+// save the spark's id in its payload given that it has already been blackholed
+void
+replaySaveSparkId(StgClosure *bh, int id)
+{
+    if (!replay_enabled) {
+        ASSERT(GET_INFO(bh) == &stg_BLACKHOLE_info);
+        ((StgThunk *)bh)->payload[0] = (void *)(W_)id;
+    }
+}
+
+// Sparks cannot be identified from their spark pool so we need to save them
+// elsewhere to obtain its id. When replaying we also need to copy the closure,
+// to be able to resolve conflicts in spark evaluation.
+static rtsBool
+saveSpark(HashTable *table, StgTSO *tso, StgClosure *spark, int id)
+{
+    StgClosure *p;
+
+    if (replay_enabled) {
+        // check if it is going to be used
+        if (existsBlackHoleEventBeforeGC(id)) {
+            // when replaying, we may use tso -> id in replayBlackHole to find
+            // the thread responsible of the spark evaluation, additionally we
+            // blackhole the spark again, to prevent unintended evaluation
+            if (tso != NULL) {
+                tso->spark_id = id;
+            } else {
+                // id -> spark
+                ASSERT(lookupHashTable(table, id) == NULL);
+                nat size = closure_sizeW(spark) * sizeof(W_);
+                p = stgMallocBytes(size, "replaySaveSpark:spark");
+                memcpy(p, spark, size);
+                insertHashTable(table, id, p);
+
+                // spark -> id
+                ASSERT(lookupHashTable(table, (W_)spark) == NULL);
+                void *m = stgMallocBytes(sizeof(int), "replaySaveSpark:id");
+                memcpy(m, &id, sizeof(int));
+                insertHashTable(table, (W_)spark, m);
+            }
+        } else {
+            return rtsFalse;
+        }
+    } else {
+        if (tso->spark_p != NULL) {
+            replaySaveSparkId(tso->spark_p, tso->spark_id);
+        }
+        tso->spark_p = spark;
+        tso->spark_id = id;
+    }
+    return rtsTrue;
+}
+
+void
+replaySaveSpark(StgTSO *tso, StgClosure *spark, int id)
+{
+    rtsBool r;
+
+    r = saveSpark(spark_ids, tso, spark, id);
+    if (replay_enabled && r) {
+        // Prevent an accidental evaluation of the thunk by the thread
+        // that is going to block or find it already updated. It will be
+        // dealt with in replayBlackHole
+        SET_INFO(spark, &stg_BLACKHOLE_info);
+        // XXX: delete
+        if (tso == NULL && ((StgInd *)spark)->indirectee != NULL) {
+            ((StgInd *)spark)->indirectee = NULL;
+            //barf("replaySaveSpark: indirectee is not NULL");
+        }
+    }
+}
+
+static int
+findSparkId(StgClosure *bh)
+{
+    ASSERT(replay_enabled);
+
+    int id = 0, *id_p;
+
+    id_p = lookupHashTable(spark_ids, (W_)bh);
+    if (id_p != NULL) {
+        id = *id_p;
+    }
+    return id;
+}
+
+int
+replayRestoreSpark(StgClosure *bh, int id_)
+{
+    int id;
+    StgClosure *p;
+
+    if (id_ == 0) {
+        id = findSparkId(bh);
+    } else {
+        id = id_;
+    }
+    ASSERT(id > 0);
+
+    p = lookupHashTable(spark_ids, id);
+    ASSERT(p != NULL);
+    memcpy(bh, p, closure_sizeW(p) * sizeof(W_));
+
+    return id;
+}
+
+StgClosure *
+replayFindSpark(Capability *cap)
+{
+    CapEvent *ce;
+    Capability *robbed;
+    StgClosure *spark;
+    int tag, id;
+
+    ce = readEvent();
+    while (isEventCapValue(ce, SPARK_FIZZLE)) {
+        // may be ours
+        robbed = eventSparkCap(ce);
+        id = ((EventCapValue *)ce->ev)->value;
+        spark = replayStealSpark_(robbed, id);
+        ASSERT(spark != NULL);
+
+        // if (!fizzledSpark(spark)) {
+        //     // TODO: sync until replayUpdateWithIndirection(spark)
+        //     replaySync_(robbed, myTask());
+        // }
+        // ASSERT(fizzledSpark(spark));
+
+        cap->spark_stats.fizzled++;
+        replayTraceCapValue(cap, SPARK_FIZZLE, id);
+        ce = readEvent();
+    }
+
+    if (isEventCapValue(ce, SPARK_RUN) ||
+        isEventCapValue(ce, SPARK_STEAL)) {
+        tag = ((EventCapValue *)ce->ev)->tag;
+        id = ((EventCapValue *)ce->ev)->value;
+        if (tag == SPARK_RUN) {
+            robbed = cap;
+        } else {
+            robbed = eventSparkCap(ce);
+        }
+        spark = replayStealSpark_(robbed, id);
+        ASSERT(spark != NULL);
+
+        // first saved in newSpark where we do not know which thread stole it,
+        // update that information now
+        replaySaveSpark(cap->r.rCurrentTSO, spark, id);
+
+        cap->spark_stats.converted++;
+        replayTraceCapValue(cap, tag, id);
+
+        return spark;
+    }
+
+    return NULL;
+}
+
 void
 replayReleaseCapability (Capability *from, Capability* cap)
 {
@@ -1205,6 +1470,423 @@ replayRtsUnlock(Capability *cap, Task *task)
 
     if (task->incall == NULL) {
         traceTaskDelete(cap, task);
+    }
+}
+
+// ThreadPaused.c
+static StgTSO *
+replayFindTSOSpark(StgTSO *tso, StgClosure *bh)
+{
+    StgClosure *p;
+
+    // the thread has the spark if it stole it
+    if (tso->spark_p == bh) {
+        return tso;
+    }
+
+    // if it has been blackholed, it may be stored in the thread that evaluated
+    // it
+    if (GET_INFO(bh) == &stg_BLACKHOLE_info) {
+        p = ((StgInd *)bh)->indirectee;
+        ASSERT(replay_enabled || p != NULL);
+        if (p != NULL) {
+            if (GET_INFO(UNTAG_CLOSURE(p)) == &stg_TSO_info) {
+                tso = (StgTSO *)p;
+                ASSERTM(replay_enabled || tso->spark_p == bh,
+                        "cap %d: task %d: blackhole %p points to tso %d but it stores %d",
+                        tso->cap->no, tso->cap->running_task->no, _ptr(bh),
+                        tso->id, tso->spark_id);
+                return tso;
+            } else if (GET_INFO(UNTAG_CLOSURE(p)) == &stg_BLOCKING_QUEUE_CLEAN_info ||
+                       GET_INFO(UNTAG_CLOSURE(p)) == &stg_BLOCKING_QUEUE_DIRTY_info) {
+                tso = ((StgBlockingQueue*)p)->owner;
+            }
+        }
+    }
+
+    return NULL;
+}
+
+int
+replayFindSparkId(StgTSO *tso, StgClosure *bh)
+{
+    int id = 0;
+    StgTSO *t;
+
+    if (replay_enabled) {
+        id = findSparkId(bh);
+    }
+
+    if (id == 0) {
+retry:
+        t = replayFindTSOSpark(tso, bh);
+        if (t == NULL) {
+            if (GET_INFO(bh) == &stg_WHITEHOLE_info) {
+                goto retry;
+            }
+
+            ASSERT(GET_INFO(bh) == &stg_BLACKHOLE_info);
+            id = (W_)((StgThunk *)bh)->payload[0];
+            if (!isValidSparkId(id)) {
+                id = 0;
+            }
+        } else {
+            id = t->spark_id;
+            ASSERT((replay_enabled && id == 0) || isValidSparkId(id));
+        }
+    }
+
+    return id;
+}
+
+// Returns whether we are going to suspend the current computation
+rtsBool
+replayThreadPaused(Capability *cap, StgTSO *tso, StgClosure **bh)
+{
+    CapEvent *ce;
+    int id;
+
+    id = findSparkId(*bh);
+    if (id == 0) {
+        return rtsFalse;
+    }
+
+    ce = readEvent();
+    if (isEventCapValue(ce, SUSPEND_COMPUTATION) &&
+        ((EventCapValue *)ce->ev)->value == (W_)id) {
+        // The thunk may have been restored for tso to carry on with
+        // the computation. We need to blackhole it to suspend the computation
+        if (GET_INFO(*bh) != &stg_BLACKHOLE_info) {
+            SET_INFO(*bh, &stg_BLACKHOLE_info);
+        }
+        return rtsTrue;
+    }
+
+    // if suspendComputation happened beforehand, we need to recover the thunk
+    if (GET_INFO(*bh) == &stg_BLACKHOLE_info) {
+        replayRestoreSpark(*bh, id);
+    }
+
+    return rtsFalse;
+}
+
+//// Threads.c
+//
+//// thunk has just been updated, we need to find and save its id
+//void
+//replayUpdateThunk(Capability *cap, StgClosure *thunk, StgClosure *indirectee)
+//{
+//    int id;
+//    StgTSO *owner;
+//    const StgInfoTable *i;
+//
+//    i = GET_INFO(indirectee);
+//    if (i == &stg_TSO_info) {
+//        owner = (StgTSO *)indirectee;
+//    } else if (i == &stg_BLOCKING_QUEUE_CLEAN_info ||
+//               i == &stg_BLOCKING_QUEUE_DIRTY_info) {
+//        owner = ((StgBlockingQueue*)indirectee)->owner;
+//    } else {
+//        barf("%p indirectee was %s\n", _ptr(indirectee), info_type(UNTAG_CLOSURE(indirectee)));
+//    }
+//    ASSERTM(owner->spark_p == thunk, "tso %d is not owner", owner->id);
+//    id = owner->spark_id;
+//
+//    debugReplay("cap %d: task %d: updateThunk: spark %p saving id %d in payload\n",
+//                cap->no, cap->running_task->no, _ptr(thunk), id);
+//    replaySaveSparkId(thunk, id);
+//}
+
+// StgMiscClosures.cmm
+
+static Capability *
+findCapSpark(int id)
+{
+    StgTSO *tso;
+    nat g;
+
+    for (g = 0; g < RtsFlags.GcFlags.generations; g++) {
+        for (tso = generations[g].threads; tso != END_TSO_QUEUE;
+             tso = tso->global_link) {
+            if (tso->spark_id == id) {
+                return tso->cap;
+            }
+        }
+    }
+    return NULL;
+}
+
+// returns a closure to evaluate or NULL to block
+StgClosure *
+replayBlackHole(StgTSO *tso, StgClosure *bh)
+{
+    CapEvent *ce;
+    int id;
+    rtsBool whnf, updated;
+    StgClosure *p;
+    Capability *cap, *owner;
+    const StgInfoTable *info = NULL;
+
+    p = ((StgInd *)bh)->indirectee;
+    // may be an unboxed value
+    //info = GET_INFO(p);
+
+    // do not use findSparkId, replayThunkUpdated may have logged a small
+    // integer in ->payload[0] that falls in the id range
+    id = replayFindSparkId(tso, bh);
+    if (id == 0) {
+        ASSERT(GET_CLOSURE_TAG(p) != 0);
+        return (void *)1;
+    }
+
+    ce = readEvent();
+
+    // first thread entering the closure, recover the thunk
+    if (p == NULL) {
+        // restore the thunk
+        replayRestoreSpark(bh, id);
+
+        if (!ce->ev->header.tag == EVENT_CAP_VALUE ||
+            (((EventCapValue *)ce->ev)->value != (W_)id &&
+             // see replayThunkUpdated
+             ((EventCapValue *)ce->ev)->value != (W_)((StgThunk *)bh)->payload[0])) {
+            return bh;
+        }
+        p = ((StgInd *)bh)->indirectee;
+    }
+
+    cap = tso->cap;
+
+    // if the blackhole has to be updated
+    whnf = isEventCapValue(ce, THUNK_WHNF);
+    updated = isEventCapValue(ce, THUNK_UPDATED);
+    if ((whnf || updated) &&
+            (((EventCapValue *)ce->ev)->value == (W_)id ||
+             // see replayThunkUpdated
+             ((EventCapValue *)ce->ev)->value == (W_)((StgThunk *)bh)->payload[0])) {
+        // return if already updated
+        if (whnf && GET_CLOSURE_TAG(p) != 0) {
+            return (void *)1;
+        }
+        info = GET_INFO(p);
+        if (updated && p != NULL && info != &stg_TSO_info &&
+            info != &stg_BLOCKING_QUEUE_CLEAN_info &&
+            info != &stg_BLOCKING_QUEUE_DIRTY_info) {
+            ASSERT(GET_CLOSURE_TAG(p) == 0);
+            return p;
+        }
+
+        // otherwise, find the cap in which the thunk is evaluated
+        // try with the spark's original capability
+        nat capno = capSparkId(id);
+        ASSERT(capno < n_capabilities);
+        if (capno == cap->no) {
+            // if it is ours, find the capability from the thread that stole
+            // the spark
+            owner = findCapSpark(id);
+            ASSERT(owner != NULL);
+        } else {
+            owner = capabilities[capno];
+        }
+        //upd = searchEventTagValueBefore(SPARK_STEAL, id, EVENT_GC_START);
+        //if (upd == NULL) {
+        //    upd = searchEventTagValueBefore(SPARK_RUN, id, EVENT_GC_START);
+        //}
+        //if (upd == NULL) {
+        //    barf("replayBlackHole: cannot find %d spark %p evaluator", id, _ptr(bh));
+        //}
+        //owner = capabilities[upd->capno];
+        //ASSERT(peekEventCap(0, upd->capno) == upd);
+
+        // let owner update the thunk
+        ASSERT(owner->replay.sync_thunk == NULL);
+        owner->replay.sync_thunk = bh;
+        replaySync_(owner, myTask());
+        owner->replay.sync_thunk = NULL;
+
+        // reload the indirection
+        p = ((StgInd *)bh)->indirectee;
+        info = GET_INFO(p);
+
+        if (isEventCapValue(ce, THUNK_WHNF)) {
+            ASSERT(GET_CLOSURE_TAG(p) != 0);
+            return (void *)1;
+        } else {
+            ASSERT(GET_CLOSURE_TAG(p) == 0);
+            ASSERT(info != &stg_TSO_info &&
+                   info != &stg_BLOCKING_QUEUE_CLEAN_info &&
+                   info != &stg_BLOCKING_QUEUE_DIRTY_info);
+            return p;
+        }
+    }
+
+    // if we have to block
+    if (isEventCapValue(ce, MSG_BLACKHOLE) &&
+        ((EventCapValue *)ce->ev)->value == (W_)id) {
+        // if it has not been yet blackholed, do not sync, just find the
+        // thread we are going to block on, an do it manually
+        if (p == NULL ||
+            ((info = GET_INFO(p)) != &stg_TSO_info &&
+             info != &stg_BLOCKING_QUEUE_CLEAN_info &&
+             info != &stg_BLOCKING_QUEUE_DIRTY_info)) {
+            // must be the second thread entering the thunk before it was
+            // blackholed, so we restored it above
+            ASSERT(GET_INFO(bh) != &stg_BLACKHOLE_info);
+            ce = searchEventCap(cap->no, EVENT_STOP_THREAD);
+            ASSERT(ce != NULL);
+            ASSERT(((EventStopThread *)ce->ev)->status ==
+                   6 + BlockedOnBlackHole);
+
+            // blackhole it
+            SET_INFO(bh, &stg_BLACKHOLE_info);
+            ((StgInd *)bh)->indirectee = (StgClosure *)
+                findThread(((EventStopThread *)ce->ev)->blocked_on);
+        }
+
+        return NULL;
+    }
+
+    // otherwise, both threads enter the thunk, restore it
+    p = ((StgInd *)bh)->indirectee;
+    replayRestoreSpark(bh, id);
+    // save the result or the tso pointer for later use if needed
+    ((StgInd *)bh)->indirectee = p;
+
+    return bh;
+}
+
+void
+replayThunkUpdated(StgTSO *tso, StgClosure *bh, rtsBool isWHNF)
+{
+    CapEvent *ce;
+    int id = replayFindSparkId(tso, bh);
+    if (id == 0) {
+        return;
+    }
+
+    // XXX: this is because we may have lost the id (a thunk updated event
+    // just after it was updated). Alternatively, we can make
+    // replayFindSparkId search for the id in every thread. If it cannot be
+    // found like that, then the value from the payload must be the right one
+    if (replay_enabled) {
+        ce = readEvent();
+        ASSERT(isEventCapValue(ce, THUNK_WHNF) ||
+               isEventCapValue(ce, THUNK_UPDATED));
+        if (((EventCapValue *)ce->ev)->value == (W_)((StgThunk *)bh)->payload[0]) {
+            id = (int)(W_)((StgThunk *)bh)->payload[0];
+        }
+    }
+
+    replayTraceCapValue(tso->cap, isWHNF ? THUNK_WHNF : THUNK_UPDATED, id);
+}
+
+MessageBlackHole *
+replayMessageBlackHole(StgTSO *tso, StgClosure *bh)
+{
+    int id, r;
+    MessageBlackHole *msg;
+
+    id = replayFindSparkId(tso, bh);
+    ASSERT(id > 0);
+
+    replayTraceCapValue(tso->cap, MSG_BLACKHOLE, id);
+
+    // save id in the blackhole, it may be used later in replayThunkUpdated
+    if (!replay_enabled) {
+        replaySaveSparkId(bh, id);
+    }
+
+    msg = (MessageBlackHole *)allocate(tso->cap, sizeofW(MessageBlackHole));
+    SET_HDR(msg, &stg_MSG_BLACKHOLE_info, CCS_SYSTEM);
+    msg->tso = tso;
+    msg->bh = bh;
+
+    if (replay_enabled) {
+        CapEvent *ce = readEvent();
+
+        if (isEventCapValue(ce, THUNK_WHNF) ||
+            isEventCapValue(ce, THUNK_UPDATED)) {
+            return 0;
+        }
+    }
+
+    r = messageBlackHole(tso->cap, msg);
+    if (r) {
+        return msg;
+    } else {
+        return NULL;
+    }
+}
+
+// Updates.h
+void
+replayUpdateWithIndirection(Capability *cap,
+                            StgClosure *p1,
+                            StgClosure *p2 STG_UNUSED)
+{
+    if (cap->replay.sync_thunk == p1) {
+        replayCont_(cap, cap->running_task);
+    }
+}
+
+// GC.c
+void
+replayStartGC(void)
+{
+    if (replay_enabled) {
+        ASSERT(gc_spark_ids == NULL);
+        gc_spark_ids = allocHashTable();
+    } else {
+        StgTSO *tso;
+        nat g;
+
+        for (g = 0; g < RtsFlags.GcFlags.generations; g++) {
+            for (tso = generations[g].threads; tso != END_TSO_QUEUE;
+                 tso = tso->global_link) {
+                if (tso->spark_p) {
+                    tso->spark_p = NULL;
+                    tso->spark_id = 0;
+                }
+            }
+        }
+    }
+
+}
+
+static StgClosure **promoted_sparks;
+static int promoted_sparks_idx;
+static int promoted_sparks_size;
+
+void
+replayPromoteSpark(StgClosure *spark, int id)
+{
+    if (saveSpark(gc_spark_ids, NULL, spark, id)) {
+        if (promoted_sparks_idx == promoted_sparks_size) {
+            promoted_sparks_size += 10;
+            promoted_sparks = stgReallocBytes(promoted_sparks, promoted_sparks_size,
+                                              "replayPromoteSpark");
+        }
+        promoted_sparks[promoted_sparks_idx++] = spark;
+    }
+}
+
+void
+replayEndGC(void)
+{
+    int i;
+
+    if (replay_enabled) {
+        freeHashTable(spark_ids, stgFree);
+        spark_ids = gc_spark_ids;
+        gc_spark_ids = NULL;
+
+        for (i = 0; i < promoted_sparks_idx; i++) {
+            SET_INFO(promoted_sparks[i], &stg_BLACKHOLE_info);
+        }
+
+        promoted_sparks_idx = promoted_sparks_size = 0;
+        stgFree(promoted_sparks);
+        promoted_sparks = NULL;
     }
 }
 

@@ -25,6 +25,7 @@
 #include "Prelude.h"
 #include "Trace.h"
 #include "LdvProfile.h"
+#include "Replay.h"
 
 #if defined(PROF_SPIN) && defined(THREADED_RTS) && defined(PARALLEL_GC)
 StgWord64 whitehole_spin = 0;
@@ -633,6 +634,18 @@ loop:
       const StgInfoTable *i;
       r = ((StgInd*)q)->indirectee;
       if (GET_CLOSURE_TAG(r) == 0) {
+#if defined(REPLAY) && defined(THREADED_RTS)
+          if (replay_enabled && r == NULL) {
+              int id = replayRestoreSpark(q, 0);
+
+              ASSERT(tag == 0 && GET_CLOSURE_TAG(q) == 0);
+              info = q->header.info;
+              copy(p,info,q,closure_sizeW(q),gen_no);
+
+              replayPromoteSpark(*p, id);
+              return;
+          }
+#endif
           i = r->header.info;
           if (IS_FORWARDING_PTR(i)) {
               r = (StgClosure *)UN_FORWARDING_PTR(i);

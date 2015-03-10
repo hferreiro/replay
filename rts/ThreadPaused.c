@@ -15,6 +15,8 @@
 #include "RaiseAsync.h"
 #include "Trace.h"
 #include "Threads.h"
+#include "Replay.h"
+#include "RtsUtils.h"
 
 #include <string.h> // for memmove()
 
@@ -200,7 +202,10 @@ threadPaused(Capability *cap, StgTSO *tso)
     nat weight           = 0;
     nat weight_pending   = 0;
     rtsBool prev_was_update_frame = rtsFalse;
-    
+#if defined(REPLAY) && defined(THREADED_RTS)
+    rtsBool suspend = rtsFalse;
+#endif
+
     // Check to see whether we have threads waiting to raise
     // exceptions, and we're not blocking exceptions, or are blocked
     // interruptibly.  This is important; if a thread is running with
@@ -236,7 +241,12 @@ threadPaused(Capability *cap, StgTSO *tso)
 
 	    SET_INFO(frame, (StgInfoTable *)&stg_marked_upd_frame_info);
 
-	    bh = ((StgUpdateFrame *)frame)->updatee;
+            bh = ((StgUpdateFrame *)frame)->updatee;
+#if defined(REPLAY) && defined(THREADED_RTS)
+            if (replay_enabled) {
+                suspend = replayThreadPaused(cap, tso, &bh);
+            }
+#endif
             bh_info = bh->header.info;
 
 #ifdef THREADED_RTS
@@ -272,10 +282,14 @@ threadPaused(Capability *cap, StgTSO *tso)
             // deadlocked on itself.  See #5226 for an instance of
             // this bug.
             //
-            if ((bh_info == &stg_WHITEHOLE_info ||
+            if (((bh_info == &stg_WHITEHOLE_info ||
                  bh_info == &stg_BLACKHOLE_info)
                 &&
                 ((StgInd*)bh)->indirectee != (StgClosure*)tso)
+#if defined(REPLAY) && defined(THREADED_RTS)
+                || suspend
+#endif
+               )
             {
 		debugTrace(DEBUG_squeeze,
 			   "suspending duplicate work: %ld words of stack",
@@ -285,6 +299,14 @@ threadPaused(Capability *cap, StgTSO *tso)
 		// suspend the computation up to this point.
 		// NB. check raiseAsync() to see what happens when
 		// we're in a loop (#2783).
+#if defined(REPLAY) && defined(THREADED_RTS)
+                // emit it before any possible 'thread wakeup' event, to
+                // identify when to stop a thread from setupNextEvent()
+                int id = replayFindSparkId(tso, bh);
+                ASSERT(id > 0);
+                replaySaveSparkId(bh, id);
+                replayTraceCapValue(cap, SUSPEND_COMPUTATION, id);
+#endif
 		suspendComputation(cap,tso,(StgUpdateFrame*)frame);
 
 		// Now drop the update frame, and arrange to return

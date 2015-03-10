@@ -135,8 +135,27 @@ eventSize(Event *ev) {
     return size;
 }
 
-#ifdef DEBUG
-static StgTSO *
+rtsBool
+equalEvents(Event *ev1, Event *ev2)
+{
+    ASSERT(ev1 != NULL);
+    ASSERT(ev2 != NULL);
+
+    rtsBool r = rtsTrue;
+
+    if (ev1->header.tag != ev2->header.tag ||
+        (isVariableSizeEvent(ev1->header.tag)
+            && eventSize(ev1) != eventSize(ev2)) ||
+        (memcmp((StgWord8 *)ev1 + sizeof(EventHeader),
+                (StgWord8 *)ev2 + sizeof(EventHeader),
+                eventSize(ev1) - sizeof(EventHeader)) != 0)) {
+        r = rtsFalse;
+    }
+
+    return r;
+}
+
+StgTSO *
 findThread(StgThreadID id)
 {
     StgTSO *t;
@@ -151,7 +170,6 @@ findThread(StgThreadID id)
     }
     barf("findThread: thread not found");
 }
-#endif
 
 void
 printEvent(Capability *cap USED_IF_DEBUG, Event *ev)

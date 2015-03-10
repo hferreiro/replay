@@ -80,6 +80,10 @@ newWSDeque (nat size)
                                   "newWSDeque");
     q->elements = stgMallocBytes(realsize * sizeof(StgClosurePtr), /* dataspace */
                                  "newWSDeque:data space");
+#ifdef REPLAY
+    q->ids = stgMallocBytes(realsize * sizeof(int),
+                            "newWSDeque:ids");
+#endif
     q->top=0;
     q->bottom=0;
     q->topBound=0; /* read by writer, updated each time top is read */
@@ -99,6 +103,9 @@ void
 freeWSDeque (WSDeque *q)
 {
     stgFree(q->elements);
+#ifdef REPLAY
+    stgFree(q->ids);
+#endif
     stgFree(q);
 }
 
@@ -177,6 +184,14 @@ popWSDeque (WSDeque *q)
 void *
 stealWSDeque_ (WSDeque *q)
 {
+#ifdef REPLAY
+    return stealWSDequeId_ (q, NULL);
+}
+
+void *
+stealWSDequeId_ (WSDeque *q, int *id)
+{
+#endif
     void * stolen;
     StgWord b,t; 
     
@@ -210,6 +225,11 @@ stealWSDeque_ (WSDeque *q)
 // Can't do this on someone else's spark pool:
 // ASSERT_WSDEQUE_INVARIANTS(q); 
     
+#ifdef REPLAY
+    if (id != NULL) {
+        *id = q->ids[t & q->moduloSize];
+    }
+#endif
     return stolen;
 }
 
@@ -236,6 +256,14 @@ stealWSDeque (WSDeque *q)
 rtsBool
 pushWSDeque (WSDeque* q, void * elem)
 {
+#ifdef REPLAY
+    return pushWSDequeId (q, elem, NULL);
+}
+
+rtsBool
+pushWSDequeId (WSDeque* q, void * elem, int *id)
+{
+#endif
     StgWord t;
     StgWord b;
     StgWord sz = q->moduloSize; 
@@ -279,6 +307,11 @@ pushWSDeque (WSDeque* q, void * elem)
     }
 
     q->elements[b & sz] = elem;
+#ifdef REPLAY
+    if (id != NULL) {
+        q->ids[b & sz] = *id;
+    }
+#endif
     /*
        KG: we need to put write barrier here since otherwise we might
        end with elem not added to q->elements, but q->bottom already

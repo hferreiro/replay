@@ -40,7 +40,11 @@ INLINE_HEADER StgClosure* reclaimSpark(SparkPool *pool);
 // if the pool is almost empty).
 INLINE_HEADER rtsBool looksEmpty(SparkPool* deque);
 
+#ifdef REPLAY
+INLINE_HEADER StgClosure * tryStealSpark (SparkPool *pool, int *id);
+#else
 INLINE_HEADER StgClosure * tryStealSpark (SparkPool *pool);
+#endif
 INLINE_HEADER rtsBool      fizzledSpark  (StgClosure *);
 
 void         freeSparkPool     (SparkPool *pool);
@@ -88,6 +92,12 @@ INLINE_HEADER void discardSparks (SparkPool *pool)
  *
  -------------------------------------------------------------------------- */
 
+#ifdef REPLAY
+INLINE_HEADER StgClosure * tryStealSpark (SparkPool *pool, int *id)
+{
+    return stealWSDequeId_(pool, id);
+}
+#else
 INLINE_HEADER StgClosure * tryStealSpark (SparkPool *pool)
 {
     return stealWSDeque_(pool);
@@ -95,6 +105,7 @@ INLINE_HEADER StgClosure * tryStealSpark (SparkPool *pool)
     // spurious NULL here the caller may want to try stealing from
     // other pools before trying again.
 }
+#endif
 
 INLINE_HEADER rtsBool fizzledSpark (StgClosure *spark)
 {

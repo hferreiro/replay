@@ -121,6 +121,7 @@ struct Capability_ {
     Message *inbox;
 
     SparkPool *sparks;
+    nat spark_id;
 
     // Stats on spark creation/conversion
     SparkCounters spark_stats;
@@ -178,6 +179,12 @@ regTableToCapability (StgRegTable *reg)
 {
     return (Capability *)((void *)((unsigned char*)reg - STG_FIELD_OFFSET(Capability,r)));
 }
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+nat newSparkId(Capability *cap);
+nat capSparkId(nat id);
+rtsBool isValidSparkId(int id);
+#endif
 
 // Initialise the available capabilities.
 //

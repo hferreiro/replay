@@ -128,6 +128,11 @@ createThread(Capability *cap, W_ size)
     tso->global_link = g0->threads;
     g0->threads = tso;
     RELEASE_LOCK(&sched_mutex);
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+    tso->spark_p = NULL;
+    tso->spark_id = 0;
+#endif
     
     // ToDo: report the stack size in the event?
     traceEventCreateThread(cap, tso);

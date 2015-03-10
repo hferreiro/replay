@@ -88,6 +88,21 @@ findSpark (Capability *cap)
   StgClosurePtr spark;
   rtsBool retry;
   nat i = 0;
+  int id USED_IF_REPLAY;
+
+#ifdef REPLAY
+  StgTSO *t = cap->r.rCurrentTSO;
+  if (replay_enabled) {
+      return replayFindSpark(cap);
+  } else {
+      // if it exists, store on the latest spark its id
+      if (t->spark_p != NULL) {
+          StgClosure *p = t->spark_p;
+          ASSERT(GET_INFO(p) == &stg_BLACKHOLE_info);
+          ((StgThunk *)p)->payload[0] = (void *)(W_)t->spark_id;
+      }
+  }
+#endif
 
   if (!emptyRunQueue(cap) || cap->returning_tasks_hd != NULL) {
       // If there are other threads, don't try to run any new
@@ -105,17 +120,31 @@ findSpark (Capability *cap)
       //   spark = reclaimSpark(cap->sparks);
       // However, measurements show that this makes at least one benchmark
       // slower (prsa) and doesn't affect the others.
+#ifdef REPLAY
+      spark = tryStealSpark(cap->sparks, &id);
+#else
       spark = tryStealSpark(cap->sparks);
+#endif
       while (spark != NULL && fizzledSpark(spark)) {
           cap->spark_stats.fizzled++;
+#ifdef REPLAY
+          replayTraceCapValue(cap, SPARK_FIZZLE, id);
+          spark = tryStealSpark(cap->sparks, &id);
+#else
           traceEventSparkFizzle(cap);
           spark = tryStealSpark(cap->sparks);
+#endif
       }
       if (spark != NULL) {
           cap->spark_stats.converted++;
 
           // Post event for running a spark from capability's own pool.
+#ifdef REPLAY
+          replaySaveSpark(t, spark, id);
+          replayTraceCapValue(cap, SPARK_RUN, id);
+#else
           traceEventSparkRun(cap);
+#endif
 
           return spark;
       }
@@ -139,11 +168,20 @@ findSpark (Capability *cap)
           if (emptySparkPoolCap(robbed)) // nothing to steal here
               continue;
 
+#ifdef REPLAY
+          spark = tryStealSpark(robbed->sparks, &id);
+#else
           spark = tryStealSpark(robbed->sparks);
+#endif
           while (spark != NULL && fizzledSpark(spark)) {
               cap->spark_stats.fizzled++;
+#ifdef REPLAY
+              replayTraceCapValue(cap, SPARK_FIZZLE, id);
+              spark = tryStealSpark(robbed->sparks, &id);
+#else
               traceEventSparkFizzle(cap);
               spark = tryStealSpark(robbed->sparks);
+#endif
           }
           if (spark == NULL && !emptySparkPoolCap(robbed)) {
               // we conflicted with another thread while trying to steal;
@@ -153,8 +191,13 @@ findSpark (Capability *cap)
 
           if (spark != NULL) {
               cap->spark_stats.converted++;
+#ifdef REPLAY
+              replaySaveSpark(t, spark, id);
+              replayTraceCapValue(cap, SPARK_STEAL, id);
+#else
               traceEventSparkSteal(cap, robbed->no);
-              
+#endif
+
               return spark;
           }
           // otherwise: no success, try next one
@@ -226,6 +269,49 @@ popReturningTask (Capability *cap)
  * The Capability is initially marked not free.
  * ------------------------------------------------------------------------- */
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+STATIC_INLINE W_ roundUp(W_ val, nat base)
+{
+    return pow(base, floor(log(val)/log(base))+1);
+}
+#endif
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+// encode the capability number in the spark id
+static nat spark_id_base;
+
+// spark ids go beyond maxLocalSparks because old ones are fizzled/gced..
+#define SPARK_ID_TIMES 10
+
+nat
+newSparkId(Capability *cap)
+{
+    nat capno = cap->no;
+
+    cap->spark_id++;
+    // %capno%spark
+    return capno * spark_id_base * SPARK_ID_TIMES + cap->spark_id;
+}
+
+nat
+capSparkId(nat id)
+{
+    nat capno = id / (spark_id_base * SPARK_ID_TIMES);
+    return capno;
+}
+
+rtsBool
+isValidSparkId(int id)
+{
+    nat capno = capSparkId(id);
+
+    return capno < n_capabilities &&
+           id > 0 &&
+           (nat)id <= capno * spark_id_base * SPARK_ID_TIMES +
+                      capabilities[capno]->spark_id;
+}
+#endif
+
 static void
 initCapability( Capability *cap, nat i )
 {
@@ -247,6 +333,8 @@ initCapability( Capability *cap, nat i )
     cap->replay.alloc      = 0;
     cap->replay.real_alloc = 0;
     cap->replay.blocks     = 0;
+    cap->replay.sync_task  = NULL;
+    cap->replay.sync_thunk = NULL;
 
 #if defined(THREADED_RTS)
     initMutex(&cap->lock);
@@ -258,6 +346,9 @@ initCapability( Capability *cap, nat i )
     cap->returning_tasks_tl = NULL;
     cap->inbox              = (Message*)END_TSO_QUEUE;
     cap->sparks             = allocSparkPool();
+#ifdef REPLAY
+    cap->spark_id               = 0;
+#endif
     cap->spark_stats.created    = 0;
     cap->spark_stats.dud        = 0;
     cap->spark_stats.overflowed = 0;
@@ -329,6 +420,10 @@ initCapabilities( void )
 	errorBelch("warning: multiple CPUs not supported in this build, reverting to 1");
 	RtsFlags.ParFlags.nNodes = 1;
     }
+#endif
+
+#ifdef REPLAY
+    spark_id_base = roundUp(roundUp(RtsFlags.ParFlags.maxLocalSparks, 2), 10);
 #endif
 
     n_capabilities = 0;

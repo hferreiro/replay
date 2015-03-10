@@ -168,6 +168,11 @@ typedef struct StgTSO_ {
      */
     StgWord32  tot_stack_size;
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+    StgClosure *spark_p;    // spark pointer
+    int         spark_id;   // spark id
+#endif
+
 } *StgTSOPtr;
 
 typedef struct StgStack_ {
