@@ -214,7 +214,11 @@ nat messageBlackHole(Capability *cap, MessageBlackHole *msg)
 loop:
     // NB. VOLATILE_LOAD(), because otherwise gcc hoists the load
     // and turns this into an infinite loop.
+#if defined(REPLAY) && defined(THREADED_RTS)
+    p = BH_IND(UNTAG_CLOSURE((StgClosure*)VOLATILE_LOAD(&((StgInd*)bh)->indirectee)));
+#else
     p = UNTAG_CLOSURE((StgClosure*)VOLATILE_LOAD(&((StgInd*)bh)->indirectee));
+#endif
     info = p->header.info;
 
     if (info == &stg_IND_info)
@@ -347,7 +351,11 @@ StgTSO * blackHoleOwner (StgClosure *bh)
 loop:
     // NB. VOLATILE_LOAD(), because otherwise gcc hoists the load
     // and turns this into an infinite loop.
+#if defined(REPLAY) && defined(THREADED_RTS)
+    p = BH_IND(UNTAG_CLOSURE((StgClosure*)VOLATILE_LOAD(&((StgInd*)bh)->indirectee)));
+#else
     p = UNTAG_CLOSURE((StgClosure*)VOLATILE_LOAD(&((StgInd*)bh)->indirectee));
+#endif
     info = p->header.info;
 
     if (info == &stg_IND_info) goto loop;

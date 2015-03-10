@@ -58,19 +58,42 @@ newSpark (StgRegTable *reg, StgClosure *p)
 {
     Capability *cap = regTableToCapability(reg);
     SparkPool *pool = cap->sparks;
-
+#ifdef REPLAY
+    if (TRACE_spark_full) {
+        replaySetSparkID(cap, p);
+    }
+#endif
     if (!fizzledSpark(p)) {
         if (pushWSDeque(pool,p)) {
             cap->spark_stats.created++;
+#ifdef REPLAY
+            if (TRACE_spark_full) {
+                replaySaveSpark(cap, p);
+                replayTraceCapValue(cap, SPARK_CREATE, SPARK_ID(p));
+            }
+#else
             traceEventSparkCreate(cap);
+#endif
         } else {
             /* overflowing the spark pool */
             cap->spark_stats.overflowed++;
+#ifdef REPLAY
+            if (TRACE_spark_full) {
+                replayTraceCapValue(cap, SPARK_OVERFLOW, SPARK_ID(p));
+            }
+#else
             traceEventSparkOverflow(cap);
+#endif
 	}
     } else {
         cap->spark_stats.dud++;
+#ifdef REPLAY
+        if (TRACE_spark_full) {
+            replayTraceCapValue(cap, SPARK_DUD, SPARK_ID(p));
+        }
+#else
         traceEventSparkDud(cap);
+#endif
     }
 
     return 1;
@@ -90,6 +113,7 @@ pruneSparkQueue (Capability *cap)
     StgClosurePtr spark, tmp, *elements;
     nat n, pruned_sparks; // stats only
     StgWord botInd,oldBotInd,currInd; // indices in array (always < size)
+    StgWord ind USED_IF_REPLAY;
     const StgInfoTable *info;
     
     n = 0;
@@ -156,6 +180,44 @@ pruneSparkQueue (Capability *cap)
     // on entry to loop, we are within the bounds
     ASSERT( currInd < pool->size && botInd  < pool->size );
 
+#ifdef REPLAY
+    // reset stolen sparks from first_spark_idx up to top
+    if (TRACE_spark_full) {
+        ind = cap->replay.first_spark_idx;
+        ASSERT(ind < pool->size);
+
+        while (ind != currInd) {
+            rtsBool reset = rtsFalse;
+            spark = elements[ind];
+            info = GET_INFO(spark);
+            if (GET_CLOSURE_TAG(spark) != 0 || IS_FORWARDING_PTR(info)) {
+                reset = rtsTrue;
+            } else {
+                if (HEAP_ALLOCED(spark)) {
+                    if (!(Bdescr((P_)spark)->flags & BF_EVACUATED)) {
+                        reset = rtsTrue;
+                    }
+                } else {
+                    if (INFO_PTR_TO_STRUCT(info)->type == THUNK_STATIC) {
+                       if (*THUNK_STATIC_LINK(spark) == NULL) {
+                           reset = rtsTrue;
+                       }
+                    } else {
+                       reset = rtsTrue;
+                    }
+                }
+            }
+            if (reset && SPARK_ATOM(spark) != 0) {
+                RESET_SPARK(spark);
+            }
+
+            if (++ind == pool->size) {
+                ind = 0;
+            }
+        }
+    }
+#endif
+
     while (currInd != oldBotInd ) {
       /* must use != here, wrap-around at size
 	 subtle: loop not entered if queue empty
@@ -177,7 +239,16 @@ pruneSparkQueue (Capability *cap)
           // robustness.
           pruned_sparks++;
           cap->spark_stats.fizzled++;
+#ifdef REPLAY
+          if (TRACE_spark_full) {
+              replayTraceCapValue(cap, SPARK_FIZZLE, SPARK_ID(spark));
+              ASSERT(GET_INFO(spark) == &stg_BLACKHOLE_info);
+              ASSERT(SPARK_ATOM(spark) == BH_IND_ATOM);
+              RESET_SPARK(spark);
+          }
+#else
           traceEventSparkFizzle(cap);
+#endif
       } else {
           info = spark->header.info;
           if (IS_FORWARDING_PTR(info)) {
@@ -187,26 +258,67 @@ pruneSparkQueue (Capability *cap)
                   elements[botInd] = tmp; // keep entry (new address)
                   botInd++;
                   n++;
+#ifdef REPLAY
+                  if (TRACE_spark_full) {
+                      ASSERT(SPARK_ATOM(tmp) == SPARK_ID_ATOM);
+                  }
+#endif
               } else {
                   pruned_sparks++; // discard spark
                   cap->spark_stats.fizzled++;
+#ifdef REPLAY
+                  if (TRACE_spark_full) {
+                      replayTraceCapValue(cap, SPARK_FIZZLE, SPARK_ID(spark));
+                      ASSERT(SPARK_ATOM(tmp) == 0);
+                  }
+#else
                   traceEventSparkFizzle(cap);
+#endif
               }
+#ifdef REPLAY
+              if (TRACE_spark_full) {
+                  if (SPARK_ATOM(spark) != 0) {
+                      RESET_SPARK(spark);
+                  }
+              }
+#endif
           } else if (HEAP_ALLOCED(spark)) {
               if ((Bdescr((P_)spark)->flags & BF_EVACUATED)) {
                   if (closure_SHOULD_SPARK(spark)) {
                       elements[botInd] = spark; // keep entry (new address)
                       botInd++;
                       n++;
+#ifdef REPLAY
+                      if (TRACE_spark_full) {
+                          ASSERT(SPARK_ATOM(spark) == SPARK_ID_ATOM);
+                      }
+#endif
                   } else {
                       pruned_sparks++; // discard spark
                       cap->spark_stats.fizzled++;
+#ifdef REPLAY
+                      if (TRACE_spark_full) {
+                          replayTraceCapValue(cap, SPARK_FIZZLE, SPARK_ID(spark));
+                          // blackhole pointing to TSO, etc.
+                          ASSERT(SPARK_ATOM(spark) == 0);
+                      }
+#else
                       traceEventSparkFizzle(cap);
+#endif
                   }
               } else {
                   pruned_sparks++; // discard spark
                   cap->spark_stats.gcd++;
+#ifdef REPLAY
+                  if (TRACE_spark_full) {
+                      replayTraceCapValue(cap, SPARK_GC, SPARK_ID(spark));
+                      if (SPARK_ATOM(spark) != 0) {
+                          RESET_SPARK(spark);
+                      }
+                  }
+#else
                   traceEventSparkGC(cap);
+#endif
               }
           } else {
               if (INFO_PTR_TO_STRUCT(info)->type == THUNK_STATIC) {
@@ -214,15 +326,36 @@ pruneSparkQueue (Capability *cap)
                       elements[botInd] = spark; // keep entry (new address)
                       botInd++;
                       n++;
+#ifdef REPLAY
+                      if (TRACE_spark_full) {
+                          ASSERT(SPARK_ATOM(spark) == SPARK_ID_ATOM);
+                      }
+#endif
                   } else {
                       pruned_sparks++; // discard spark
                       cap->spark_stats.gcd++;
+#ifdef REPLAY
+                      if (TRACE_spark_full) {
+                          replayTraceCapValue(cap, SPARK_GC, SPARK_ID(spark));
+                          ASSERT(SPARK_ATOM(spark) == SPARK_ID_ATOM);
+                          RESET_SPARK(spark);
+                      }
+#else
                       traceEventSparkGC(cap);
+#endif
                   }
               } else {
                   pruned_sparks++; // discard spark
                   cap->spark_stats.fizzled++;
+#ifdef REPLAY
+                  if (TRACE_spark_full) {
+                      replayTraceCapValue(cap, SPARK_FIZZLE, SPARK_ID(spark));
+                      ASSERT(SPARK_ATOM(spark) == SPARK_ID_ATOM);
+                      RESET_SPARK(spark);
+                  }
+#else
                   traceEventSparkFizzle(cap);
+#endif
               }
           }
       }

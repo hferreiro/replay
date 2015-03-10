@@ -217,6 +217,18 @@
 #define DEBUG_ONLY(s) /* nothing */
 #endif
 
+#ifdef THREADED_RTS
+#define THREADED_ONLY(s) s
+#else
+#define THREADED_ONLY(s) /* nothing */
+#endif
+
+#ifdef REPLAY
+#define REPLAY_ONLY(s) s
+#else
+#define REPLAY_ONLY(s) /* nothing */
+#endif
+
 /*
  * The IF_DEBUG macro is useful for debug messages that depend on one
  * of the RTS debug options.  For example:

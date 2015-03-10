@@ -25,6 +25,7 @@
 #include "Prelude.h"
 #include "Trace.h"
 #include "LdvProfile.h"
+#include "Replay.h"
 
 #if defined(PROF_SPIN) && defined(THREADED_RTS) && defined(PARALLEL_GC)
 StgWord64 whitehole_spin = 0;
@@ -632,7 +633,26 @@ loop:
       StgClosure *r;
       const StgInfoTable *i;
       r = ((StgInd*)q)->indirectee;
+#if defined(REPLAY) && defined(THREADED_RTS)
+      if (REPLAY_ATOM(r) != 0) {
+          ASSERT(REPLAY_ATOM(r) == BH_IND_ATOM);
+          r = BH_IND(r);
+      }
+#endif
       if (GET_CLOSURE_TAG(r) == 0) {
+#if defined(REPLAY) && defined(THREADED_RTS)
+          // fake blackhole
+          if (replay_enabled && SPARK_ATOM(q) == SPARK_ID_ATOM) {
+              replayRestoreSpark(q);
+
+              info = q->header.info;
+              ASSERT(closure_THUNK(q));
+              copy(p,info,q,closure_sizeW(q),gen_no);
+
+              replayPromoteSpark(*p, q);
+              return;
+          }
+#endif
           i = r->header.info;
           if (IS_FORWARDING_PTR(i)) {
               r = (StgClosure *)UN_FORWARDING_PTR(i);
@@ -830,6 +850,9 @@ eval_thunk_selector (StgClosure **q, StgSelector * p, rtsBool evac)
     StgSelector *prev_thunk_selector;
     bdescr *bd;
     StgClosure *val;
+#if defined(REPLAY) && defined(THREADED_RTS)
+    rtsBool restored = rtsFalse;
+#endif
     
     prev_thunk_selector = NULL;
     // this is a chain of THUNK_SELECTORs that we are going to update
@@ -1021,11 +1044,25 @@ selector_loop:
       {
           StgClosure *r;
           const StgInfoTable *i;
+#if defined(REPLAY) && defined(THREADED_RTS)
+          r = BH_IND(((StgInd *)selectee)->indirectee);
+#else
           r = ((StgInd*)selectee)->indirectee;
+#endif
 
           // establish whether this BH has been updated, and is now an
           // indirection, as in evacuate().
           if (GET_CLOSURE_TAG(r) == 0) {
+#if defined(REPLAY) && defined(THREADED_RTS)
+              // fake blackhole
+              if (replay_enabled && SPARK_ATOM(q) == SPARK_ID_ATOM) {
+                  replayRestoreSpark(selectee);
+
+                  ASSERT(closure_THUNK(selectee));
+                  restored = rtsTrue;
+                  goto selector_loop;
+              }
+#endif
               i = r->header.info;
               if (IS_FORWARDING_PTR(i)) {
                   r = (StgClosure *)UN_FORWARDING_PTR(i);
@@ -1096,6 +1133,11 @@ bale_out:
     *q = (StgClosure *)p;
     if (evac) {
         copy(q,(const StgInfoTable *)info_ptr,(StgClosure *)p,THUNK_SELECTOR_sizeW(),bd->dest_no);
+#if defined(REPLAY) && defined(THREADED_RTS)
+        if (restored) {
+            replayPromoteSpark(*q, (StgClosure *)p);
+        }
+#endif
     }
     unchain_thunk_selectors(prev_thunk_selector, *q);
     return;

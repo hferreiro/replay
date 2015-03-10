@@ -127,10 +127,16 @@ createThread(Capability *cap, W_ size)
     tso->id = next_thread_id++;  // while we have the mutex
     tso->global_link = g0->threads;
     g0->threads = tso;
+
+    if (!replay_enabled) {
+        traceEventCreateThread(cap, tso);
+    }
+
     RELEASE_LOCK(&sched_mutex);
-    
-    // ToDo: report the stack size in the event?
-    traceEventCreateThread(cap, tso);
+
+    if (replay_enabled) {
+        traceEventCreateThread(cap, tso);
+    }
 
     return tso;
 }
@@ -417,12 +423,22 @@ updateThunk (Capability *cap, StgTSO *tso, StgClosure *thunk, StgClosure *val)
         i != &stg_CAF_BLACKHOLE_info &&
         i != &__stg_EAGER_BLACKHOLE_info &&
         i != &stg_WHITEHOLE_info) {
+#if defined(REPLAY) && defined(THREADED_RTS)
+        maybeUpdateWithIndirection(cap, thunk, val);
+#else
         updateWithIndirection(cap, thunk, val);
+#endif
         return;
     }
-    
-    v = ((StgInd*)thunk)->indirectee;
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+    v = BH_IND(((StgInd*)thunk)->indirectee);
+#else
+    v = ((StgInd*)thunk)->indirectee;
+#endif
+
+    // compulsory update, comming from updateAdjacentFrames or
+    // stg_marked_upd_frame
     updateWithIndirection(cap, thunk, val);
 
     // sometimes the TSO is locked when we reach here, so its header

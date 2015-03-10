@@ -561,6 +561,16 @@ clearNursery (Capability *cap)
         ASSERT(bd->gen_no == 0);
         ASSERT(bd->gen == g0);
         IF_DEBUG(sanity,memset(bd->start, 0xaa, BLOCK_SIZE));
+#if defined(REPLAY) && defined(DEBUG)
+        StgPtr p;
+        for (p = bd->start; p < bd->start + BLOCK_SIZE_W; p++) {
+            if (REPLAY_ATOM(*p) == SPARK_ID_ATOM) {
+                ASSERT(closure_THUNK((StgClosure *)*p));
+            } else if (REPLAY_ATOM(*p) == BH_IND_ATOM) {
+                barf("replay: didn't clear %p", (void *)*p);
+            }
+        }
+#endif
     }
 }
 

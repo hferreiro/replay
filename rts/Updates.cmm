@@ -52,7 +52,11 @@ INFO_TABLE_RET ( stg_marked_upd_frame, UPDATE_FRAME,
     ASSERT(HpAlloc == 0); // Note [HpAlloc]
 
     // we know the closure is a BLACKHOLE
+#if defined(REPLAY) && defined(THREADED_RTS)
+    v = BH_IND(StgInd_indirectee(updatee));
+#else
     v = StgInd_indirectee(updatee);
+#endif
 
     if (GETTAG(v) != 0) {
         // updated by someone else: discard our value and use the
@@ -64,6 +68,9 @@ INFO_TABLE_RET ( stg_marked_upd_frame, UPDATE_FRAME,
 
     // common case: it is still our BLACKHOLE
     if (v == CurrentTSO) {
+        // the indirectee needs to be updated but the TSO was saved in
+        // threadPaused without BH_IND_ATOM, so it will only refuse to
+        // perform the update if a concurrent update happened
         updateWithIndirection(updatee, ret, return (ret));
     }
 

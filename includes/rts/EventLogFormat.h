@@ -254,6 +254,17 @@ typedef enum {
     PROCESS_INBOX,
     SCHED_END,
     STEAL_BLOCK,
+    SPARK_CREATE,
+    SPARK_DUD,
+    SPARK_OVERFLOW,
+    SPARK_RUN,
+    SPARK_STEAL,
+    SPARK_FIZZLE,
+    SPARK_GC,
+    SUSPEND_COMPUTATION,
+    MSG_BLACKHOLE,
+    THUNK_WHNF,
+    THUNK_UPDATED,
 } EventCapTag;
 
 #endif

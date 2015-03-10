@@ -1470,6 +1470,13 @@ scavenge_mutable_list(bdescr *bd, generation *gen)
                 recordMutableGen_GC((StgClosure *)p,gen_no);
 		continue;
             }
+#if defined(REPLAY) && defined(THREADED_RTS)
+            case BLACKHOLE:
+                if (SPARK_ATOM(p) != 0) {
+                    ASSERT(SPARK_ATOM(p) == BH_IND_ATOM);
+                    RESET_SPARK(p);
+                }
+#endif
             default:
 		;
 	    }

@@ -179,6 +179,14 @@ regTableToCapability (StgRegTable *reg)
     return (Capability *)((void *)((unsigned char*)reg - STG_FIELD_OFFSET(Capability,r)));
 }
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+INLINE_HEADER StgWord32
+newSparkId(Capability *cap)
+{
+    return ++cap->replay.spark_id;
+}
+#endif
+
 // Initialise the available capabilities.
 //
 void initCapabilities (void);
