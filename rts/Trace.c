@@ -1068,6 +1068,39 @@ void traceCapValue_stderr(Capability *cap,
     case STEAL_BLOCK:
         str = "steal block";
         break;
+    case SPARK_CREATE:
+        str = "create spark";
+        break;
+    case SPARK_DUD:
+        str = "spark duplicated";
+        break;
+    case SPARK_OVERFLOW:
+        str = "spark overflowed";
+        break;
+    case SPARK_RUN:
+        str = "run spark";
+        break;
+    case SPARK_STEAL:
+        str = "steal spark";
+        break;
+    case SPARK_FIZZLE:
+        str = "fizzle spark";
+        break;
+    case SPARK_GC:
+        str = "GC spark";
+        break;
+    case SUSPEND_COMPUTATION:
+        str = "suspend computation";
+        break;
+    case MSG_BLACKHOLE:
+        str = "message blackhole";
+        break;
+    case THUNK_WHNF:
+        str = "thunk whnf";
+        break;
+    case THUNK_UPDATED:
+        str = "thunk updated";
+        break;
     default:
         barf("traceCapValue_stderr: unknown capability tag in event");
     }

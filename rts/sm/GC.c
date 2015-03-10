@@ -48,6 +48,7 @@
 #include "Papi.h"
 #include "Stable.h"
 #include "CheckUnload.h"
+#include "Replay.h"
 
 #include <string.h> // for memset()
 #include <unistd.h>
@@ -216,6 +217,10 @@ GarbageCollect (nat collect_gen,
 
   // tell the stats department that we've started a GC
   stat_startGC(cap, gct);
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+  replayStartGC();
+#endif
 
   // lock the StablePtr table
   stableLock();
@@ -760,6 +765,10 @@ GarbageCollect (nat collect_gen,
 #ifdef DEBUG
   // check for memory leaks if DEBUG is on
   memInventory(DEBUG_gc);
+#endif
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+  replayEndGC();
 #endif
 
   // ok, GC over: tell the stats department what happened.

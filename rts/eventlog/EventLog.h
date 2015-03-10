@@ -36,7 +36,9 @@ void endEventLoggingReplay(void);
 void moreCapEventBufsReplay(nat from, nat to);
 
 CapEvent *peekEventCap(nat n, int capno);
+CapEvent *searchEventCap(int capno, nat tag);
 CapEvent *searchEventTagValueBefore(nat tag, W_ value, nat last);
+rtsBool existsBlackHoleEventBeforeGC(W_ value);
 CapEvent *readEvent(void);
 CapEvent *nextEvent(void);
 void freeEvent(CapEvent *ce);

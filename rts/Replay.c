@@ -12,16 +12,17 @@
 #include "eventlog/EventLog.h"
 #include "Capability.h"
 #include "Event.h"
+#include "Hash.h"
 #include "Messages.h"
 #include "RtsFlags.h"
 #include "RtsUtils.h"
 #include "Schedule.h"
+#include "Task.h"
 #include "Trace.h"
 #include "Replay.h"
 
+#include <math.h>
 #include <string.h>
-
-#define _ptr(p) ((void *)((StgWord)(p) & 0x0fffff))
 
 rtsBool replay_enabled = rtsFalse;
 
@@ -50,12 +51,16 @@ static Semaphore **task_replay;
 
 static Task **running_tasks; // owner task for each capability
 
+static HashTable *spark_thunks;
+static HashTable *spark_owners;
+
+static HashTable *gc_spark_thunks;
+static HashTable *gc_spark_owners;
+
 static Task *findTask(nat no);
 
 static void replayLoop(void);
 #endif
-
-static rtsBool isEventCapValue(CapEvent *ce, int tag);
 
 void
 initReplay(void)
@@ -102,6 +107,9 @@ initReplay(void)
         for (r = 0; r < (int)RtsFlags.ParFlags.nNodes; r++) {
             running_tasks[r] = NULL;
         }
+
+        spark_thunks = allocHashTable();
+        spark_owners = allocHashTable();
 #endif
     }
 }
@@ -125,6 +133,9 @@ endReplay(void)
         closeSemaphore(&replay_sched);
 
         stgFree(running_tasks);
+
+        freeHashTable(spark_thunks, stgFree);
+        freeHashTable(spark_owners, NULL);
 #endif
     }
 }
@@ -189,7 +200,7 @@ void
 replaySaveHp(Capability *cap)
 {
     replayPrint("Saving Hp...\n");
-    replayPrint("  hp    = %p\n", _ptr(START_FREE(cap->r.rCurrentNursery)));
+    replayPrint("  hp    = %p\n", START_FREE(cap->r.rCurrentNursery));
     replayPrint("  alloc = %ld\n\n", cap->replay.alloc);
 
     ASSERT(cap->replay.last_bd == NULL);
@@ -216,7 +227,7 @@ replaySaveAlloc(Capability *cap)
     hp = START_FREE(bd);
 
 #ifdef DEBUG
-    debugBelch("Yielded at %p\n", _ptr(hp));
+    debugBelch("Yielded at %p\n", hp);
 #endif
 
     // when replaying and only if the thread yielded
@@ -274,35 +285,29 @@ failedMatch(Capability *cap, Event *ev, Event *read)
     barf("replay: '%s' events did not match", EventDesc[ev->header.tag]);
 }
 
-rtsBool
-compareEvents(Event *ev, Event *read)
-{
-    ASSERT(ev);
-    ASSERT(read);
-    ASSERT(ev->header.tag == read->header.tag);
-
-    rtsBool r = rtsTrue;
-
-    if ((isVariableSizeEvent(ev->header.tag)
-            && eventSize(ev) != eventSize(read)) ||
-        (memcmp((StgWord8 *)ev + sizeof(EventHeader),
-                (StgWord8 *)read + sizeof(EventHeader),
-                eventSize(ev) - sizeof(EventHeader)) != 0)) {
-        r = rtsFalse;
-    }
-
-    return r;
-}
-
 static void
 setupNextEvent(void)
 {
     CapEvent *ce;
+    int next = 1;
 
     ce = readEvent();
     if (ce == NULL) {
         return;
     }
+
+#ifdef THREADED_RTS
+    // these events happen once the thread has already stopped, but before
+    // 'stop thread'
+    while (isEventCapValue(ce, SUSPEND_COMPUTATION)) {
+        ce = peekEventCap(next++, ce->capno);
+        ASSERT(ce != NULL);
+        while (isEventCapValue(ce, STEAL_BLOCK)) {
+            ce = peekEventCap(next++, ce->capno);
+            ASSERT(ce != NULL);
+        }
+    }
+#endif
 
     switch(ce->ev->header.tag) {
     case EVENT_STOP_THREAD:
@@ -315,7 +320,7 @@ setupNextEvent(void)
             Capability *cap;
             EventCapAlloc *ev;
 
-            ce = peekEventCap(1, ce->capno);
+            ce = peekEventCap(next, ce->capno);
             ASSERT(ce != NULL);
             ev = (EventCapAlloc *)ce->ev;
             ASSERT(ev->header.tag == EVENT_CAP_ALLOC);
@@ -362,6 +367,30 @@ setupNextEvent(void)
 
 //extern char **environ;
 
+#ifdef THREADED_RTS
+// task needs the task running in cap to perform some computation before being
+// able to continue
+static void
+replaySync_(Capability *cap, Task *task)
+{
+    ASSERT(cap->running_task != NULL);
+    ASSERT(cap->replay.sync_task == NULL);
+    cap->replay.sync_task = task;
+    signalSemaphore(task_replay[cap->running_task->no]);
+    waitSemaphore(task_replay[task->no]);
+    cap->replay.sync_task = NULL;
+}
+
+static void
+replayCont_(Capability *cap, Task *task)
+{
+    if (cap->replay.sync_task != NULL) {
+        signalSemaphore(task_replay[cap->replay.sync_task->no]);
+        waitSemaphore(task_replay[task->no]);
+    }
+}
+#endif
+
 void
 replayEvent(Capability *cap, Event *ev)
 {
@@ -372,6 +401,11 @@ replayEvent(Capability *cap, Event *ev)
     nat tag;
 
 #ifdef THREADED_RTS
+    // we may have reached here to synchronise with another task,
+    // in that case, return the control to that task
+    if (cap != NULL && cap->running_task != NULL) {
+        replayCont_(cap, cap->running_task);
+    }
 #endif
 
     ce = readEvent();
@@ -503,7 +537,7 @@ replayEvent(Capability *cap, Event *ev)
     {
         Task *task USED_IF_THREADS;
 
-        if (!compareEvents(ev, read)) {
+        if (!equalEvents(ev, read)) {
             failedMatch(cap, ev, read);
         }
 
@@ -559,14 +593,29 @@ replayEvent(Capability *cap, Event *ev)
 
             ecv->value = ecv_read->value;
             break;
+        case SPARK_CREATE:
+        case SPARK_DUD:
+        case SPARK_OVERFLOW:
+        case SPARK_RUN:
+        case SPARK_STEAL:
+        case SPARK_FIZZLE:
+        case SPARK_GC:
+        case SUSPEND_COMPUTATION:
+        case MSG_BLACKHOLE:
+        case THUNK_WHNF:
+        case THUNK_UPDATED:
+            if (ecv->value != ecv_read->value) {
+                failedMatch(cap, ev, read);
+            }
+            goto out;
         default:
             ;
         }
 
-        if (!compareEvents(ev, read)) {
+        if (!equalEvents(ev, read)) {
             failedMatch(cap, ev, read);
         }
-
+out:
         break;
     }
 #ifdef THREADED_RTS
@@ -575,7 +624,7 @@ replayEvent(Capability *cap, Event *ev)
     {
         Task *task;
 
-        if (!compareEvents(ev, read)) {
+        if (!equalEvents(ev, read)) {
             failedMatch(cap, ev, read);
         }
 
@@ -594,7 +643,7 @@ replayEvent(Capability *cap, Event *ev)
     }
 #endif
     default:
-        if (!compareEvents(ev, read)) {
+        if (!equalEvents(ev, read)) {
             failedMatch(cap, ev, read);
         }
         break;
@@ -630,14 +679,6 @@ replayEvent(Capability *cap, Event *ev)
     stgFree(ev);
 }
 
-static void
-replayCapValue(Capability *cap, int tag, int value)
-{
-    if (replay_enabled) {
-        replayEvent(cap, createCapValueEvent(tag, value));
-    }
-}
-
 void
 replayTraceCapTag(Capability *cap, int tag)
 {
@@ -645,23 +686,31 @@ replayTraceCapTag(Capability *cap, int tag)
 }
 
 void
-replayTraceCapValue(Capability *cap, int tag, int value)
+replayTraceCapValue(Capability *cap, int tag, W_ value)
 {
     traceCapValue(cap, tag, value);
     replayCapValue(cap, tag, value);
 }
 
-int
+W_
 replayCapTag(Capability *cap, int tag)
 {
-    int v = 0;
+    W_ v = 0;
     CapEvent *ce = readEvent();
 
     if (isEventCapValue(ce, tag)) {
-        v = (int)((EventCapValue *)ce->ev)->value;
+        v = ((EventCapValue *)ce->ev)->value;
         replayCapValue(cap, tag, 0);
     }
     return v;
+}
+
+void
+replayCapValue(Capability *cap, int tag, W_ value)
+{
+    if (replay_enabled) {
+        replayEvent(cap, createCapValueEvent(tag, value));
+    }
 }
 
 
@@ -747,15 +796,206 @@ replayMVar(Capability *cap, StgClosure *p, const StgInfoTable *info, int tag, in
 #endif
 
 // Capability.c
-static rtsBool
-isEventCapValue(CapEvent *ce, int tag)
+#ifdef THREADED_RTS
+static Capability *
+sparkOwner(W_ spark)
 {
-    ASSERT(ce != NULL);
-    return (ce->ev->header.tag == EVENT_CAP_VALUE &&
-            ((EventCapValue *)ce->ev)->tag == tag);
+    Capability *owner = lookupHashTable(spark_owners, spark);
+    if (owner == NULL) {
+        CapEvent *ce = searchEventTagValueBefore(SPARK_CREATE, spark, EVENT_GC_START);
+        if (ce != NULL) {
+            owner = capabilities[ce->capno];
+        }
+    }
+    return owner;
 }
 
-#ifdef THREADED_RTS
+// finds the capability in conflict with cap
+static Capability *
+sparkOwner_(Capability *cap, W_ spark)
+{
+    Capability *owner = sparkOwner(spark);
+    if (owner == cap) {
+        removeHashTable(spark_owners, spark, cap);
+    }
+    return sparkOwner(spark);
+}
+
+#define swap(x,y)           \
+    do {                    \
+        typeof(x) _x = x;   \
+        typeof(y) _y = y;   \
+        x = _y;             \
+        y = _x;             \
+    } while(0)
+
+static void
+prepareSpark(Capability *cap, W_ spark)
+{
+    SparkPool *pool;
+
+    pool = cap->sparks;
+    if (sparkPoolSize(pool) == 0) {
+#ifdef DEBUG
+        // TODO: may need to replay a few events to get to SPARK_CREATE
+        CapEvent *ce = peekEventCap(0, cap->no);
+        ASSERT(isEventCapValue(ce, SPARK_CREATE));
+#endif
+        replaySync_(cap, myTask());
+    }
+    ASSERT(sparkPoolSize(pool) > 0);
+
+    if ((W_)pool->elements[pool->top & pool->moduloSize] != spark) {
+        int idx, idx1, size;
+
+        ASSERT(sparkPoolSize(pool) > 1);
+
+        // find the right spark
+        size = sparkPoolSize(pool);
+        do {
+            idx = (pool->top + size-1) & pool->moduloSize;
+            size--;
+        } while ((W_)pool->elements[idx] != spark && size > 1);
+        ASSERT((W_)pool->elements[idx] == spark);
+
+        // swap sparks
+        while (size > 0) {
+            idx1 = idx;
+            idx = (pool->top + size-1) & pool->moduloSize;
+            swap(pool->elements[idx], pool->elements[idx1]);
+            size--;
+        }
+    }
+
+}
+
+static void
+storeSpark(HashTable *thunks, StgClosure *spark)
+{
+    StgClosure *p;
+    nat size;
+
+    ASSERT(lookupHashTable(thunks, (W_)spark) == NULL);
+    size = closure_sizeW(spark) * sizeof(W_);
+    p = stgMallocBytes(size, "replaySaveSpark");
+    memcpy(p, spark, size);
+    insertHashTable(thunks, (W_)spark, p);
+
+    // Prevent an accidental evaluation of the thunk by the thread
+    // that is going to block or find it already updated. It will be
+    // dealt with in replayBlackHole
+    SET_INFO(spark, &stg_BLACKHOLE_info);
+}
+
+static void
+saveSpark(Capability *cap, StgClosure *spark, rtsBool isGC)
+{
+    HashTable *thunks, *owners;
+
+    if (isGC) {
+        thunks = gc_spark_thunks;
+        owners = gc_spark_owners;
+    } else {
+        thunks = spark_thunks;
+        owners = spark_owners;
+    }
+
+    if (lookupHashTable(thunks, (W_)spark) != NULL) {
+        // needed for sparkOwner_
+        //ASSERT(lookupHashTable(owners, (W_)spark) != NULL);
+        //removeHashTable(owners, (W_)spark, NULL);
+
+        // may have been restored
+        if (GET_INFO(spark) != &stg_BLACKHOLE_info) {
+            SET_INFO(spark, &stg_BLACKHOLE_info);
+        }
+    } else {
+        // check if it is going to be used
+        if (existsBlackHoleEventBeforeGC((W_)spark)) {
+            storeSpark(thunks, spark);
+        }
+    }
+
+    if (cap != NULL) {
+        insertHashTable(owners, (W_)spark, cap);
+    }
+}
+
+void
+replaySaveSpark(Capability *cap, StgClosure *spark)
+{
+    saveSpark(cap, spark, rtsFalse);
+}
+
+void
+replayRestoreSpark(StgClosure *bh)
+{
+    StgClosure *p;
+
+    p = lookupHashTable(spark_thunks, (W_)bh);
+    ASSERT(p != NULL);
+    memcpy(bh, p, closure_sizeW(p) * sizeof(W_));
+}
+
+StgClosure *
+replayFindSpark(Capability *cap)
+{
+    CapEvent *ce;
+    Capability *robbed;
+    StgClosure *spark;
+    W_ id;
+    int tag;
+
+    ce = readEvent();
+    while (isEventCapValue(ce, SPARK_FIZZLE)) {
+        // may be ours
+        id = ((EventCapValue *)ce->ev)->value;
+        robbed = sparkOwner(id);
+        ASSERT(robbed != NULL);
+        prepareSpark(robbed, id);
+        spark = tryStealSpark(robbed->sparks);
+        ASSERT((W_)spark == id);
+
+        removeHashTable(spark_owners, id, NULL);
+
+        // if (!fizzledSpark(spark)) {
+        //     // TODO: sync until replayUpdateWithIndirection(spark)
+        //     replaySync_(robbed, myTask());
+        // }
+        // ASSERT(fizzledSpark(spark));
+
+        cap->spark_stats.fizzled++;
+        replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+        ce = readEvent();
+    }
+
+    if (isEventCapValue(ce, SPARK_RUN) ||
+        isEventCapValue(ce, SPARK_STEAL)) {
+        tag = ((EventCapValue *)ce->ev)->tag;
+        id = ((EventCapValue *)ce->ev)->value;
+        robbed = sparkOwner(id);
+        if (tag == SPARK_RUN) {
+            ASSERT(robbed == cap);
+        } else {
+            ASSERT(robbed != NULL);
+        }
+        prepareSpark(robbed, id);
+        spark = tryStealSpark(robbed->sparks);
+        ASSERT((W_)spark == id);
+
+        // it may have not been saved in newSpark if not used then, also it
+        // needs blackholing
+        replaySaveSpark(cap, spark);
+
+        cap->spark_stats.converted++;
+        replayTraceCapValue(cap, tag, (W_)spark);
+
+        return spark;
+    }
+
+    return NULL;
+}
+
 void
 replayReleaseCapability (Capability *from, Capability* cap)
 {
@@ -1210,6 +1450,255 @@ replayRtsUnlock(Capability *cap, Task *task)
 
     if (task->incall == NULL) {
         traceTaskDelete(cap, task);
+    }
+}
+
+// ThreadPaused.c
+
+// Returns whether we are going to suspend the current computation
+rtsBool
+replayThreadPaused(Capability *cap, StgTSO *tso, StgClosure *bh)
+{
+    CapEvent *ce;
+
+    ce = readEvent();
+    if (isEventCapValue(ce, SUSPEND_COMPUTATION) &&
+        ((EventCapValue *)ce->ev)->value == (W_)bh) {
+        // The thunk may have been restored for tso to carry on with
+        // the computation. We need to blackhole it to suspend the computation
+        if (GET_INFO(bh) != &stg_BLACKHOLE_info) {
+            SET_INFO(bh, &stg_BLACKHOLE_info);
+        }
+        return rtsTrue;
+    }
+
+    // if suspendComputation happened beforehand, we need to recover the thunk
+    if (GET_INFO(bh) == &stg_BLACKHOLE_info) {
+        replayRestoreSpark(bh);
+    }
+
+    return rtsFalse;
+}
+
+// StgMiscClosures.cmm
+
+// returns a closure to evaluate or NULL to block
+StgClosure *
+replayBlackHole(StgTSO *tso, StgClosure *bh)
+{
+    CapEvent *ce;
+    rtsBool whnf, updated;
+    StgClosure *p;
+    Capability *cap, *owner;
+    const StgInfoTable *info = NULL;
+
+    p = ((StgInd *)bh)->indirectee;
+    // may be an unboxed value
+    //info = GET_INFO(p);
+
+    ce = readEvent();
+
+    // first thread entering the closure, recover the thunk
+    if (p == NULL) {
+        // restore the thunk
+        replayRestoreSpark(bh);
+
+        if (!ce->ev->header.tag == EVENT_CAP_VALUE ||
+            ((EventCapValue *)ce->ev)->value != (W_)bh) {
+            return bh;
+        }
+        p = ((StgInd *)bh)->indirectee;
+    }
+
+    cap = tso->cap;
+
+    // if the blackhole has to be updated
+    whnf = isEventCapValue(ce, THUNK_WHNF);
+    updated = isEventCapValue(ce, THUNK_UPDATED);
+    if ((whnf || updated) &&
+        ((EventCapValue *)ce->ev)->value == (W_)bh) {
+        // return if already updated
+        if (whnf && GET_CLOSURE_TAG(p) != 0) {
+            return (void *)1;
+        }
+        if (p != NULL) {
+            info = GET_INFO(p);
+            if (updated && info != &stg_TSO_info &&
+                info != &stg_BLOCKING_QUEUE_CLEAN_info &&
+                info != &stg_BLOCKING_QUEUE_DIRTY_info) {
+                ASSERT(GET_CLOSURE_TAG(p) == 0);
+                return p;
+            }
+        }
+
+        // otherwise, find the cap in which the thunk is evaluated
+        owner = sparkOwner_(cap, (W_)bh);
+        ASSERT(owner != NULL);
+
+        // let owner update the thunk
+        ASSERT(owner->replay.sync_thunk == NULL);
+        owner->replay.sync_thunk = bh;
+        replaySync_(owner, myTask());
+        owner->replay.sync_thunk = NULL;
+
+        // reload the indirection
+        p = ((StgInd *)bh)->indirectee;
+        info = GET_INFO(p);
+
+        if (isEventCapValue(ce, THUNK_WHNF)) {
+            ASSERT(GET_CLOSURE_TAG(p) != 0);
+            return (void *)1;
+        } else {
+            ASSERT(GET_CLOSURE_TAG(p) == 0);
+            ASSERT(info != &stg_TSO_info &&
+                   info != &stg_BLOCKING_QUEUE_CLEAN_info &&
+                   info != &stg_BLOCKING_QUEUE_DIRTY_info);
+            return p;
+        }
+    }
+
+    // if we have to block
+    if (isEventCapValue(ce, MSG_BLACKHOLE) &&
+        ((EventCapValue *)ce->ev)->value == (W_)bh) {
+
+        // if the blackhole was updated just before blocking (see
+        // messageBlackHole returning 0)
+        ce = peekEventCap(1, cap->no);
+        if (isEventCapValue(ce, THUNK_UPDATED)) {
+            ASSERT(((EventCapValue *)ce->ev)->value == (W_)bh);
+            return NULL;
+        }
+
+        // if it has not been yet blackholed, do not sync, just find the
+        // thread we are going to block on, an do it manually
+        if (p == NULL ||
+            ((info = GET_INFO(p)) != &stg_TSO_info &&
+             info != &stg_BLOCKING_QUEUE_CLEAN_info &&
+             info != &stg_BLOCKING_QUEUE_DIRTY_info)) {
+            // must be the second thread entering the thunk before it was
+            // blackholed, so we restored it above
+            ASSERT(GET_INFO(bh) != &stg_BLACKHOLE_info);
+            ce = searchEventCap(cap->no, EVENT_STOP_THREAD);
+            ASSERT(ce != NULL);
+            ASSERT(((EventStopThread *)ce->ev)->status ==
+                   6 + BlockedOnBlackHole);
+
+            // blackhole it
+            SET_INFO(bh, &stg_BLACKHOLE_info);
+            ((StgInd *)bh)->indirectee = (StgClosure *)
+                findThread(((EventStopThread *)ce->ev)->blocked_on);
+        }
+
+        return NULL;
+    }
+
+    // otherwise, both threads enter the thunk, restore it
+    p = ((StgInd *)bh)->indirectee;
+    replayRestoreSpark(bh);
+    // save the result or the tso pointer for later use if needed
+    ((StgInd *)bh)->indirectee = p;
+
+    return bh;
+}
+
+void
+replayThunkUpdated(StgTSO *tso, StgClosure *bh, rtsBool isWHNF)
+{
+    if (replay_enabled && !isWHNF) {
+        // AP_STACK works as a blackhole too, we need to save it
+        storeSpark(spark_thunks, ((StgInd *)bh)->indirectee);
+    }
+
+    replayTraceCapValue(tso->cap, isWHNF ? THUNK_WHNF : THUNK_UPDATED, (W_)bh);
+}
+
+MessageBlackHole *
+replayMessageBlackHole(StgTSO *tso, StgClosure *bh)
+{
+    int r;
+    MessageBlackHole *msg;
+
+    replayTraceCapValue(tso->cap, MSG_BLACKHOLE, (W_)bh);
+
+    msg = (MessageBlackHole *)allocate(tso->cap, sizeofW(MessageBlackHole));
+    SET_HDR(msg, &stg_MSG_BLACKHOLE_info, CCS_SYSTEM);
+    msg->tso = tso;
+    msg->bh = bh;
+
+    if (replay_enabled) {
+        CapEvent *ce = readEvent();
+
+        if (isEventCapValue(ce, THUNK_WHNF) ||
+            isEventCapValue(ce, THUNK_UPDATED)) {
+            return NULL;
+        }
+    }
+
+    r = messageBlackHole(tso->cap, msg);
+    if (r) {
+        return msg;
+    } else {
+        return NULL;
+    }
+}
+
+// Updates.h
+void
+replayUpdateWithIndirection(Capability *cap,
+                            StgClosure *p1,
+                            StgClosure *p2 STG_UNUSED)
+{
+    if (cap->replay.sync_thunk == p1) {
+        replayCont_(cap, cap->running_task);
+    }
+}
+
+// GC.c
+void
+replayStartGC(void)
+{
+    if (replay_enabled) {
+        ASSERT(gc_spark_thunks == NULL);
+        gc_spark_thunks = allocHashTable();
+        ASSERT(gc_spark_owners == NULL);
+        gc_spark_owners = allocHashTable();
+    }
+}
+
+void
+replayPromoteSpark(StgClosure *spark, StgClosure *old)
+{
+    Capability *cap;
+
+    cap = lookupHashTable(spark_owners, (W_)old);
+    ASSERT(cap != NULL);
+    saveSpark(cap, spark, rtsTrue);
+}
+
+void
+replayEndGC(void)
+{
+    if (replay_enabled) {
+        freeHashTable(spark_thunks, stgFree);
+        spark_thunks = gc_spark_thunks;
+        gc_spark_thunks = NULL;
+
+        freeHashTable(spark_owners, NULL);
+        spark_owners = gc_spark_owners;
+        gc_spark_owners = NULL;
+    }
+}
+
+rtsBool
+replayGCContinue(void)
+{
+    CapEvent *ce = readEvent();
+
+    if (ce->ev->header.tag == EVENT_GC_WORK) {
+        return rtsTrue;
+    } else {
+        ASSERT(ce->ev->header.tag == EVENT_GC_DONE);
+        return rtsFalse;
     }
 }
 

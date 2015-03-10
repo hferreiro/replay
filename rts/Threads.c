@@ -127,10 +127,16 @@ createThread(Capability *cap, W_ size)
     tso->id = next_thread_id++;  // while we have the mutex
     tso->global_link = g0->threads;
     g0->threads = tso;
+
+    if (!replay_enabled) {
+        traceEventCreateThread(cap, tso);
+    }
+
     RELEASE_LOCK(&sched_mutex);
-    
-    // ToDo: report the stack size in the event?
-    traceEventCreateThread(cap, tso);
+
+    if (replay_enabled) {
+        traceEventCreateThread(cap, tso);
+    }
 
     return tso;
 }

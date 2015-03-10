@@ -89,6 +89,12 @@ findSpark (Capability *cap)
   rtsBool retry;
   nat i = 0;
 
+#ifdef REPLAY
+  if (replay_enabled) {
+      return replayFindSpark(cap);
+  }
+#endif
+
   if (!emptyRunQueue(cap) || cap->returning_tasks_hd != NULL) {
       // If there are other threads, don't try to run any new
       // sparks: sparks might be speculative, we don't want to take
@@ -108,14 +114,22 @@ findSpark (Capability *cap)
       spark = tryStealSpark(cap->sparks);
       while (spark != NULL && fizzledSpark(spark)) {
           cap->spark_stats.fizzled++;
+#ifdef REPLAY
+          replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+#else
           traceEventSparkFizzle(cap);
+#endif
           spark = tryStealSpark(cap->sparks);
       }
       if (spark != NULL) {
           cap->spark_stats.converted++;
 
           // Post event for running a spark from capability's own pool.
+#ifdef REPLAY
+          replayTraceCapValue(cap, SPARK_RUN, (W_)spark);
+#else
           traceEventSparkRun(cap);
+#endif
 
           return spark;
       }
@@ -142,7 +156,11 @@ findSpark (Capability *cap)
           spark = tryStealSpark(robbed->sparks);
           while (spark != NULL && fizzledSpark(spark)) {
               cap->spark_stats.fizzled++;
+#ifdef REPLAY
+              replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+#else
               traceEventSparkFizzle(cap);
+#endif
               spark = tryStealSpark(robbed->sparks);
           }
           if (spark == NULL && !emptySparkPoolCap(robbed)) {
@@ -153,8 +171,12 @@ findSpark (Capability *cap)
 
           if (spark != NULL) {
               cap->spark_stats.converted++;
+#ifdef REPLAY
+              replayTraceCapValue(cap, SPARK_STEAL, (W_)spark);
+#else
               traceEventSparkSteal(cap, robbed->no);
-              
+#endif
+
               return spark;
           }
           // otherwise: no success, try next one
@@ -247,6 +269,8 @@ initCapability( Capability *cap, nat i )
     cap->replay.alloc      = 0;
     cap->replay.real_alloc = 0;
     cap->replay.blocks     = 0;
+    cap->replay.sync_task  = NULL;
+    cap->replay.sync_thunk = NULL;
 
 #if defined(THREADED_RTS)
     initMutex(&cap->lock);
@@ -566,7 +590,9 @@ releaseAndWakeupCapability (Capability *from USED_IF_THREADS,
 
     task = cap->running_task;
 
+#ifdef DEBUG
     debugBelch("cap %d: task %d: releaseAndWakeupCapability\n", from->no, task->no);
+#endif
 
 #ifdef REPLAY
     if (replay_enabled) {

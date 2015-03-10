@@ -11,6 +11,8 @@
 
 #ifndef CMINUSMINUS
 #include "BeginPrivate.h"
+
+#include "Replay.h"
 #endif
 
 /* -----------------------------------------------------------------------------
@@ -49,6 +51,11 @@
     prim_write_barrier;                                         \
     SET_INFO(p1, stg_BLACKHOLE_info);                           \
     LDV_RECORD_CREATE(p1);                                      \
+    REPLAY_ONLY(THREADED_ONLY(                                      \
+    if (CInt[replay_enabled] == 1 :: CInt) {                        \
+        ccall replayUpdateWithIndirection(MyCapability(), p1, p2);  \
+    }                                                               \
+    ))                                                              \
     bd = Bdescr(p1);						\
     if (bdescr_gen_no(bd) != 0 :: bits16) {			\
       recordMutableCap(p1, TO_W_(bdescr_gen_no(bd)));           \
@@ -75,6 +82,11 @@ INLINE_HEADER void updateWithIndirection (Capability *cap,
     write_barrier();
     SET_INFO(p1, &stg_BLACKHOLE_info);
     LDV_RECORD_CREATE(p1);
+#if defined(REPLAY) && defined(THREADED_RTS)
+    if (replay_enabled) {
+        replayUpdateWithIndirection(cap, p1, p2);
+    }
+#endif
     bd = Bdescr((StgPtr)p1);
     if (bd->gen_no != 0) {
         recordMutableCap(p1, cap, bd->gen_no);
