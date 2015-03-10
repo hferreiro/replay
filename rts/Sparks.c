@@ -58,19 +58,33 @@ newSpark (StgRegTable *reg, StgClosure *p)
 {
     Capability *cap = regTableToCapability(reg);
     SparkPool *pool = cap->sparks;
-
     if (!fizzledSpark(p)) {
         if (pushWSDeque(pool,p)) {
             cap->spark_stats.created++;
+#ifdef REPLAY
+            if (replay_enabled) {
+                replaySaveSpark(cap, p);
+            }
+            replayTraceCapValue(cap, SPARK_CREATE, (W_)p);
+#else
             traceEventSparkCreate(cap);
+#endif
         } else {
             /* overflowing the spark pool */
             cap->spark_stats.overflowed++;
+#ifdef REPLAY
+            replayTraceCapValue(cap, SPARK_OVERFLOW, (W_)p);
+#else
             traceEventSparkOverflow(cap);
+#endif
 	}
     } else {
         cap->spark_stats.dud++;
+#ifdef REPLAY
+        replayTraceCapValue(cap, SPARK_DUD, (W_)p);
+#else
         traceEventSparkDud(cap);
+#endif
     }
 
     return 1;
@@ -177,7 +191,11 @@ pruneSparkQueue (Capability *cap)
           // robustness.
           pruned_sparks++;
           cap->spark_stats.fizzled++;
+#ifdef REPLAY
+          replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+#else
           traceEventSparkFizzle(cap);
+#endif
       } else {
           info = spark->header.info;
           if (IS_FORWARDING_PTR(info)) {
@@ -190,7 +208,11 @@ pruneSparkQueue (Capability *cap)
               } else {
                   pruned_sparks++; // discard spark
                   cap->spark_stats.fizzled++;
+#ifdef REPLAY
+                  replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+#else
                   traceEventSparkFizzle(cap);
+#endif
               }
           } else if (HEAP_ALLOCED(spark)) {
               if ((Bdescr((P_)spark)->flags & BF_EVACUATED)) {
@@ -201,12 +223,20 @@ pruneSparkQueue (Capability *cap)
                   } else {
                       pruned_sparks++; // discard spark
                       cap->spark_stats.fizzled++;
+#ifdef REPLAY
+                      replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+#else
                       traceEventSparkFizzle(cap);
+#endif
                   }
               } else {
                   pruned_sparks++; // discard spark
                   cap->spark_stats.gcd++;
+#ifdef REPLAY
+                  replayTraceCapValue(cap, SPARK_GC, (W_)spark);
+#else
                   traceEventSparkGC(cap);
+#endif
               }
           } else {
               if (INFO_PTR_TO_STRUCT(info)->type == THUNK_STATIC) {
@@ -217,12 +247,20 @@ pruneSparkQueue (Capability *cap)
                   } else {
                       pruned_sparks++; // discard spark
                       cap->spark_stats.gcd++;
+#ifdef REPLAY
+                      replayTraceCapValue(cap, SPARK_GC, (W_)spark);
+#else
                       traceEventSparkGC(cap);
+#endif
                   }
               } else {
                   pruned_sparks++; // discard spark
                   cap->spark_stats.fizzled++;
+#ifdef REPLAY
+                  replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+#else
                   traceEventSparkFizzle(cap);
+#endif
               }
           }
       }

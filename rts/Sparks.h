@@ -10,6 +10,7 @@
 #define SPARKS_H
 
 #include "WSDeque.h"
+#include "sm/GC.h"
 
 #include "BeginPrivate.h"
 

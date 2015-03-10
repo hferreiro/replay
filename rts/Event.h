@@ -249,6 +249,12 @@ typedef struct _EventTaskReturnCap {
 
 rtsBool isVariableSizeEvent(EventTypeNum tag);
 int eventSize(Event *ev);
+rtsBool equalEvents(Event *ev1, Event *ev2);
+
+rtsBool isEventCapValue(CapEvent *ce, int tag);
+
+StgTSO *findThread(StgThreadID id);
+
 void printEvent(Capability *cap, Event *ev);
 
 Event *createEvent(EventTypeNum tag);
