@@ -484,6 +484,71 @@ replayEvent(Capability *cap, Event *ev)
         stgFree(argv);
         break;
     }
+#ifdef DEBUG
+    // allow debug way when replaying
+    case EVENT_RTS_IDENTIFIER:
+    {
+        EventCapsetMsg *ecm, *ecm_read;
+        int size, strsize, strsize_read;
+        const char *msg, *msg_read, *c, *c_read;
+
+        ecm = (EventCapsetMsg *)ev;
+        ecm_read = (EventCapsetMsg *)read;
+
+        if (ecm->capset != ecm_read->capset) {
+            failedMatch(cap, ev, read);
+        }
+
+        strsize = ecm->size - sizeof(EventCapsetID);
+        strsize_read = ecm_read->size - sizeof(EventCapsetID);
+
+        msg = (const char *)ecm->msg;
+        msg_read = (const char *)ecm_read->msg;
+
+        // check ProjectVersion
+        c = strchr((const char *)ecm->msg, ' ');
+        size = c - msg; // ProjectVersion size
+        if (strsize_read < size ||
+            strncmp(msg, msg_read, size) != 0) {
+            failedMatch(cap, ev, read);
+        }
+
+        // check RtsWay
+        c = (const char *)ecm->msg + size;
+        c_read = (const char *)ecm_read->msg + size;
+        while (c != msg + (strsize-1) &&
+               c_read != msg_read + (strsize_read-1) &&
+               *c == *c_read) {
+            c++;
+            c_read++;
+        }
+        // ignore debug_
+        size = strsize - (c-msg);
+        if (size >= 5 && strncmp(c, "debug", 5) == 0) {
+            c += 5;
+            if (size >=6 && *c == '_') {
+                c++;
+            }
+        }
+        // debug implies l, ignore in read
+        size = strsize_read - (c_read-msg_read);
+        if (size >= 1 && *c_read == 'l') {
+            c_read++;
+            size--;
+            if (size >= 1 && *c_read == '_') {
+                c_read++;
+                size--;
+            }
+        }
+        // check the leftover
+        if (strsize - (c-msg) != size ||
+            strncmp(c, c_read, size) != 0) {
+            failedMatch(cap, ev, read);
+        }
+
+        break;
+    }
+#endif
     case EVENT_OSPROCESS_PID:
     case EVENT_OSPROCESS_PPID:
     {
