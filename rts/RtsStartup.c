@@ -176,7 +176,9 @@ hs_init_ghc(int *argc, char **argv[], RtsConfig rts_config)
 #endif
 
 #if defined(REPLAY) && defined(THREADED_RTS)
-    replay_init_thread = osThreadId();
+    if (TRACE_spark_full) {
+        replay_init_thread = osThreadId();
+    }
 #endif
 
     /* first event, so that it can be parsed when replaying */

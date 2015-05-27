@@ -65,7 +65,9 @@ newSpark (StgRegTable *reg, StgClosure *p)
             if (replay_enabled) {
                 replaySaveSpark(cap, p);
             }
-            replayTraceCapValue(cap, SPARK_CREATE, (W_)p);
+            if (TRACE_spark_full) {
+                replayTraceCapValue(cap, SPARK_CREATE, (W_)p);
+            }
 #else
             traceEventSparkCreate(cap);
 #endif
@@ -73,7 +75,9 @@ newSpark (StgRegTable *reg, StgClosure *p)
             /* overflowing the spark pool */
             cap->spark_stats.overflowed++;
 #ifdef REPLAY
-            replayTraceCapValue(cap, SPARK_OVERFLOW, (W_)p);
+            if (TRACE_spark_full) {
+                replayTraceCapValue(cap, SPARK_OVERFLOW, (W_)p);
+            }
 #else
             traceEventSparkOverflow(cap);
 #endif
@@ -81,7 +85,9 @@ newSpark (StgRegTable *reg, StgClosure *p)
     } else {
         cap->spark_stats.dud++;
 #ifdef REPLAY
-        replayTraceCapValue(cap, SPARK_DUD, (W_)p);
+        if (TRACE_spark_full) {
+            replayTraceCapValue(cap, SPARK_DUD, (W_)p);
+        }
 #else
         traceEventSparkDud(cap);
 #endif
@@ -192,7 +198,9 @@ pruneSparkQueue (Capability *cap)
           pruned_sparks++;
           cap->spark_stats.fizzled++;
 #ifdef REPLAY
-          replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+          if (TRACE_spark_full) {
+              replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+          }
 #else
           traceEventSparkFizzle(cap);
 #endif
@@ -209,7 +217,9 @@ pruneSparkQueue (Capability *cap)
                   pruned_sparks++; // discard spark
                   cap->spark_stats.fizzled++;
 #ifdef REPLAY
-                  replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+                  if (TRACE_spark_full) {
+                      replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+                  }
 #else
                   traceEventSparkFizzle(cap);
 #endif
@@ -224,7 +234,9 @@ pruneSparkQueue (Capability *cap)
                       pruned_sparks++; // discard spark
                       cap->spark_stats.fizzled++;
 #ifdef REPLAY
-                      replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+                      if (TRACE_spark_full) {
+                          replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+                      }
 #else
                       traceEventSparkFizzle(cap);
 #endif
@@ -233,7 +245,9 @@ pruneSparkQueue (Capability *cap)
                   pruned_sparks++; // discard spark
                   cap->spark_stats.gcd++;
 #ifdef REPLAY
-                  replayTraceCapValue(cap, SPARK_GC, (W_)spark);
+                  if (TRACE_spark_full) {
+                      replayTraceCapValue(cap, SPARK_GC, (W_)spark);
+                  }
 #else
                   traceEventSparkGC(cap);
 #endif
@@ -248,7 +262,9 @@ pruneSparkQueue (Capability *cap)
                       pruned_sparks++; // discard spark
                       cap->spark_stats.gcd++;
 #ifdef REPLAY
-                      replayTraceCapValue(cap, SPARK_GC, (W_)spark);
+                      if (TRACE_spark_full) {
+                          replayTraceCapValue(cap, SPARK_GC, (W_)spark);
+                      }
 #else
                       traceEventSparkGC(cap);
 #endif
@@ -257,7 +273,9 @@ pruneSparkQueue (Capability *cap)
                   pruned_sparks++; // discard spark
                   cap->spark_stats.fizzled++;
 #ifdef REPLAY
-                  replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+                  if (TRACE_spark_full) {
+                      replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+                  }
 #else
                   traceEventSparkFizzle(cap);
 #endif

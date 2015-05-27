@@ -944,7 +944,7 @@ INLINE_HEADER void traceCapAlloc(Capability *cap USED_IF_TRACING,
                                  W_          blocks USED_IF_TRACING,
                                  W_          hp_alloc USED_IF_TRACING)
 {
-    if (RTS_UNLIKELY(TRACE_sched)) {
+    if (RTS_UNLIKELY(TRACE_spark_full)) {
         traceCapAlloc_(cap, alloc, blocks, hp_alloc);
     }
 }
@@ -953,7 +953,7 @@ INLINE_HEADER void traceCapValue(Capability *cap USED_IF_TRACING,
                                  nat         tag USED_IF_TRACING,
                                  W_          value USED_IF_TRACING)
 {
-    if (RTS_UNLIKELY(TRACE_sched)) {
+    if (RTS_UNLIKELY(TRACE_spark_full)) {
         traceCapValue_(cap, tag, value);
     }
 }
@@ -962,7 +962,7 @@ INLINE_HEADER void traceTaskAcquireCap (Capability *cap USED_IF_TRACING,
                                         Task       *task USED_IF_TRACING)
 {
     ASSERT(cap->running_task == task);
-    if (RTS_UNLIKELY(TRACE_sched)) {
+    if (RTS_UNLIKELY(TRACE_spark_full)) {
         traceTaskAcquireCap_(cap, task);
     }
 }
@@ -971,7 +971,7 @@ INLINE_HEADER void traceTaskReleaseCap (Capability *cap USED_IF_TRACING,
                                         Task       *task USED_IF_TRACING)
 {
     ASSERT(cap->running_task != task);
-    if (RTS_UNLIKELY(TRACE_sched)) {
+    if (RTS_UNLIKELY(TRACE_spark_full)) {
         traceTaskReleaseCap_(cap, task);
     }
 }
@@ -980,7 +980,7 @@ INLINE_HEADER void traceTaskReturnCap (Task       *task USED_IF_TRACING,
                                        Capability *cap USED_IF_TRACING)
 {
     ASSERT(task->cap == cap);
-    if (RTS_UNLIKELY(TRACE_sched)) {
+    if (RTS_UNLIKELY(TRACE_spark_full)) {
         traceTaskReturnCap_(task, cap);
     }
 }

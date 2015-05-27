@@ -115,7 +115,9 @@ findSpark (Capability *cap)
       while (spark != NULL && fizzledSpark(spark)) {
           cap->spark_stats.fizzled++;
 #ifdef REPLAY
-          replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+          if (TRACE_spark_full) {
+              replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+          }
 #else
           traceEventSparkFizzle(cap);
 #endif
@@ -126,7 +128,9 @@ findSpark (Capability *cap)
 
           // Post event for running a spark from capability's own pool.
 #ifdef REPLAY
-          replayTraceCapValue(cap, SPARK_RUN, (W_)spark);
+          if (TRACE_spark_full) {
+              replayTraceCapValue(cap, SPARK_RUN, (W_)spark);
+          }
 #else
           traceEventSparkRun(cap);
 #endif
@@ -157,7 +161,9 @@ findSpark (Capability *cap)
           while (spark != NULL && fizzledSpark(spark)) {
               cap->spark_stats.fizzled++;
 #ifdef REPLAY
-              replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+              if (TRACE_spark_full) {
+                  replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
+              }
 #else
               traceEventSparkFizzle(cap);
 #endif
@@ -172,7 +178,9 @@ findSpark (Capability *cap)
           if (spark != NULL) {
               cap->spark_stats.converted++;
 #ifdef REPLAY
-              replayTraceCapValue(cap, SPARK_STEAL, (W_)spark);
+              if (TRACE_spark_full) {
+                  replayTraceCapValue(cap, SPARK_STEAL, (W_)spark);
+              }
 #else
               traceEventSparkSteal(cap, robbed->no);
 #endif
@@ -324,8 +332,10 @@ initCapability( Capability *cap, nat i )
     traceCapCreate(cap);
     traceCapsetAssignCap(CAPSET_OSPROCESS_DEFAULT, i);
     traceCapsetAssignCap(CAPSET_CLOCKDOMAIN_DEFAULT, i);
-#if defined(THREADED_RTS) && !defined(REPLAY)
-    traceSparkCounters(cap);
+#if defined(THREADED_RTS)
+    if (!TRACE_spark_full) {
+        traceSparkCounters(cap);
+    }
 #endif
 }
 

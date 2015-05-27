@@ -347,7 +347,7 @@ calcTotalAllocated(void)
     W_ n;
     for (n = 0; n < n_capabilities; n++) {
 #ifdef REPLAY
-        if (eventlog_enabled || replay_enabled) {
+        if (TRACE_spark_full) {
             ASSERT(capabilities[n]->replay.real_alloc == capabilities[n]->total_allocated);
         }
 #endif
