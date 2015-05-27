@@ -144,7 +144,7 @@ void
 replayPrint(char *s USED_IF_DEBUG, ...)
 {
 #if defined(DEBUG)
-    if (replay_enabled) {
+    if (TRACE_spark_full) {
         va_list ap;
 
         va_start(ap, s);
@@ -818,7 +818,7 @@ replayWorkerStart(Capability *cap, Task *task)
 {
     if (replay_enabled) {
         waitSemaphore(task_replay[task->no]);
-    } else {
+    } else if (TRACE_spark_full) {
         // 'release capability' is cap local and is emitted always after
         // releaseCapability_ which can be the creator of this worker, which will be
         // running and emitting events without the capability lock, so make
@@ -850,11 +850,13 @@ replayMVar(Capability *cap, StgClosure *p, const StgInfoTable *info, int tag, in
         unlockClosure(p, info);
         replayTraceCapValue(cap, tag, value);
     } else {
-        traceCapValue(cap, tag, value);
+        if (TRACE_spark_full) {
+            traceCapValue(cap, tag, value);
 #ifdef DEBUG
-        Event *ev = createCapValueEvent(tag, value);
-        printEvent(cap, ev);
+            Event *ev = createCapValueEvent(tag, value);
+            printEvent(cap, ev);
 #endif
+        }
         unlockClosure(p, info);
     }
 }
@@ -1669,6 +1671,8 @@ replayBlackHole(StgTSO *tso, StgClosure *bh)
 void
 replayThunkUpdated(StgTSO *tso, StgClosure *bh, rtsBool isWHNF)
 {
+    if (!TRACE_spark_full) return;
+
     if (replay_enabled && !isWHNF) {
         // AP_STACK works as a blackhole too, we need to save it
         storeSpark(spark_thunks, ((StgInd *)bh)->indirectee);
@@ -1683,7 +1687,9 @@ replayMessageBlackHole(StgTSO *tso, StgClosure *bh)
     int r;
     MessageBlackHole *msg;
 
-    replayTraceCapValue(tso->cap, MSG_BLACKHOLE, (W_)bh);
+    if (TRACE_spark_full) {
+        replayTraceCapValue(tso->cap, MSG_BLACKHOLE, (W_)bh);
+    }
 
     msg = (MessageBlackHole *)allocate(tso->cap, sizeofW(MessageBlackHole));
     SET_HDR(msg, &stg_MSG_BLACKHOLE_info, CCS_SYSTEM);

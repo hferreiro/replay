@@ -1098,14 +1098,16 @@ scheduleProcessInbox (Capability **pcap USED_IF_THREADS)
         RELEASE_LOCK(&cap->lock);
 
 #if defined(REPLAY) && defined(THREADED_RTS)
-        next = m;
-        r = 0;
-        while (next != (Message *)END_TSO_QUEUE) {
-            next = next->link;
-            r++;
-        }
-        if (r > 0) {
-            replayTraceCapValue(cap, PROCESS_INBOX, r);
+        if (TRACE_spark_full) {
+            next = m;
+            r = 0;
+            while (next != (Message *)END_TSO_QUEUE) {
+                next = next->link;
+                r++;
+            }
+            if (r > 0) {
+                replayTraceCapValue(cap, PROCESS_INBOX, r);
+            }
         }
 #endif
 
