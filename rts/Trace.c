@@ -261,8 +261,7 @@ void traceSchedEvent_ (Capability *cap, EventTypeNum tag,
         postSchedEvent(cap,tag,tso ? tso->id : 0, info1, info2);
     }
 
-    if (RtsFlags.TraceFlags.tracing != TRACE_STDERR &&
-        tag == EVENT_RUN_THREAD) {
+    if (TRACE_spark_full && tag == EVENT_RUN_THREAD) {
         // before replay because replaying RUN_THREAD with a STOP_THREAD
         // inmediately afterwards will require the saved Hp to calculate the
         // yield block
@@ -273,8 +272,7 @@ void traceSchedEvent_ (Capability *cap, EventTypeNum tag,
         replayEvent(cap, createSchedEvent(tag, tso, info1, info2));
     }
 
-    if (RtsFlags.TraceFlags.tracing != TRACE_STDERR &&
-        tag == EVENT_STOP_THREAD) {
+    if (TRACE_spark_full && tag == EVENT_STOP_THREAD) {
         // after replay because it emits EVENT_CAP_ALLOC
         replaySaveAlloc(cap);
     }

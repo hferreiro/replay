@@ -302,7 +302,9 @@ threadPaused(Capability *cap, StgTSO *tso)
 #if defined(REPLAY) && defined(THREADED_RTS)
                 // emit it before any possible 'thread wakeup' event, to
                 // identify when to stop a thread from setupNextEvent()
-                replayTraceCapValue(cap, SUSPEND_COMPUTATION, (W_)bh);
+                if (TRACE_spark_full) {
+                    replayTraceCapValue(cap, SUSPEND_COMPUTATION, (W_)bh);
+                }
 #endif
 		suspendComputation(cap,tso,(StgUpdateFrame*)frame);
 
