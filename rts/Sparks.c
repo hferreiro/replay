@@ -74,9 +74,11 @@ newSpark (StgRegTable *reg, StgClosure *p)
             if (replay_enabled) {
                 replaySaveSpark(NULL, p, id);
             }
-            debugReplay("cap %d: task %d: spark %d created %p\n",
-                        cap->no, cap->running_task->no, id, (void *)((W_)p & 0x0fffff));
-            replayTraceCapValue(cap, SPARK_CREATE, id);
+            if (TRACE_spark_full) {
+                debugReplay("cap %d: task %d: spark %d created %p\n",
+                            cap->no, cap->running_task->no, id, (void *)((W_)p & 0x0fffff));
+                replayTraceCapValue(cap, SPARK_CREATE, id);
+            }
 #else
             traceEventSparkCreate(cap);
 #endif
@@ -84,7 +86,9 @@ newSpark (StgRegTable *reg, StgClosure *p)
             /* overflowing the spark pool */
             cap->spark_stats.overflowed++;
 #ifdef REPLAY
-            replayTraceCapValue(cap, SPARK_OVERFLOW, id);
+            if (TRACE_spark_full) {
+                replayTraceCapValue(cap, SPARK_OVERFLOW, id);
+            }
 #else
             traceEventSparkOverflow(cap);
 #endif
@@ -92,9 +96,11 @@ newSpark (StgRegTable *reg, StgClosure *p)
     } else {
         cap->spark_stats.dud++;
 #ifdef REPLAY
-        debugReplay("cap %d: task %d: spark %d fizzled %p\n",
-                    cap->no, cap->running_task->no, id, (void *)((W_)p & 0x0fffff));
-        replayTraceCapValue(cap, SPARK_DUD, id);
+        if (TRACE_spark_full) {
+            debugReplay("cap %d: task %d: spark %d fizzled %p\n",
+                        cap->no, cap->running_task->no, id, (void *)((W_)p & 0x0fffff));
+            replayTraceCapValue(cap, SPARK_DUD, id);
+        }
 #else
         traceEventSparkDud(cap);
 #endif
@@ -214,9 +220,11 @@ pruneSparkQueue (Capability *cap)
           pruned_sparks++;
           cap->spark_stats.fizzled++;
 #ifdef REPLAY
-          debugReplay("cap %d: task %d: spark %d fizzled %p\n",
-                      cap->no, cap->running_task->no, id, (void *)((W_)spark & 0x0fffff));
-          replayTraceCapValue(cap, SPARK_FIZZLE, id);
+          if (TRACE_spark_full) {
+              debugReplay("cap %d: task %d: spark %d fizzled %p\n",
+                          cap->no, cap->running_task->no, id, (void *)((W_)spark & 0x0fffff));
+              replayTraceCapValue(cap, SPARK_FIZZLE, id);
+          }
 #else
           traceEventSparkFizzle(cap);
 #endif
@@ -228,10 +236,12 @@ pruneSparkQueue (Capability *cap)
               if (closure_SHOULD_SPARK(tmp)) {
                   elements[botInd] = tmp; // keep entry (new address)
 #ifdef REPLAY
-                  debugReplay("cap %d: task %d: spark %d %p is now %p\n",
-                              cap->no, cap->running_task->no, id,
-                              (void *)((W_)spark & 0x0fffff), (void *)((W_)tmp & 0x0fffff));
-                  ids[botInd] = id;
+                  if (TRACE_spark_full) {
+                      debugReplay("cap %d: task %d: spark %d %p is now %p\n",
+                                  cap->no, cap->running_task->no, id,
+                                  (void *)((W_)spark & 0x0fffff), (void *)((W_)tmp & 0x0fffff));
+                      ids[botInd] = id;
+                  }
                   if (replay_enabled) {
                       replayPromoteSpark(tmp, id);
                   }
@@ -242,9 +252,11 @@ pruneSparkQueue (Capability *cap)
                   pruned_sparks++; // discard spark
                   cap->spark_stats.fizzled++;
 #ifdef REPLAY
-                  debugReplay("cap %d: task %d: spark %d fizzled %p\n",
-                              cap->no, cap->running_task->no, id, (void *)((W_)spark & 0x0fffff));
-                  replayTraceCapValue(cap, SPARK_FIZZLE, id);
+                  if (TRACE_spark_full) {
+                      debugReplay("cap %d: task %d: spark %d fizzled %p\n",
+                                  cap->no, cap->running_task->no, id, (void *)((W_)spark & 0x0fffff));
+                      replayTraceCapValue(cap, SPARK_FIZZLE, id);
+                  }
 #else
                   traceEventSparkFizzle(cap);
 #endif
@@ -254,7 +266,9 @@ pruneSparkQueue (Capability *cap)
                   if (closure_SHOULD_SPARK(spark)) {
                       elements[botInd] = spark; // keep entry (new address)
 #ifdef REPLAY
-                      ids[botInd] = id;
+                      if (TRACE_spark_full) {
+                          ids[botInd] = id;
+                      }
                       if (replay_enabled) {
                           replayPromoteSpark(spark, id);
                       }
@@ -265,9 +279,11 @@ pruneSparkQueue (Capability *cap)
                       pruned_sparks++; // discard spark
                       cap->spark_stats.fizzled++;
 #ifdef REPLAY
-                      debugReplay("cap %d: task %d: spark %d fizzled %p\n",
-                                  cap->no, cap->running_task->no, id, (void *)((W_)spark & 0x0fffff));
-                      replayTraceCapValue(cap, SPARK_FIZZLE, id);
+                      if (TRACE_spark_full) {
+                          debugReplay("cap %d: task %d: spark %d fizzled %p\n",
+                                      cap->no, cap->running_task->no, id, (void *)((W_)spark & 0x0fffff));
+                          replayTraceCapValue(cap, SPARK_FIZZLE, id);
+                      }
 #else
                       traceEventSparkFizzle(cap);
 #endif
@@ -276,9 +292,11 @@ pruneSparkQueue (Capability *cap)
                   pruned_sparks++; // discard spark
                   cap->spark_stats.gcd++;
 #ifdef REPLAY
-                  debugReplay("cap %d: task %d: spark %d gced %p\n",
-                              cap->no, cap->running_task->no, id, (void *)((W_)spark & 0x0fffff));
-                  replayTraceCapValue(cap, SPARK_GC, id);
+                  if (TRACE_spark_full) {
+                      debugReplay("cap %d: task %d: spark %d gced %p\n",
+                                  cap->no, cap->running_task->no, id, (void *)((W_)spark & 0x0fffff));
+                      replayTraceCapValue(cap, SPARK_GC, id);
+                  }
 #else
                   traceEventSparkGC(cap);
 #endif
@@ -288,7 +306,9 @@ pruneSparkQueue (Capability *cap)
                   if (*THUNK_STATIC_LINK(spark) != NULL) {
                       elements[botInd] = spark; // keep entry (new address)
 #ifdef REPLAY
-                      ids[botInd] = id;
+                      if (TRACE_spark_full) {
+                          ids[botInd] = id;
+                      }
                       if (replay_enabled) {
                           replayPromoteSpark(spark, id);
                       }
@@ -299,9 +319,11 @@ pruneSparkQueue (Capability *cap)
                       pruned_sparks++; // discard spark
                       cap->spark_stats.gcd++;
 #ifdef REPLAY
-                      debugReplay("cap %d: task %d: spark %d gced %p\n",
-                                  cap->no, cap->running_task->no, id, (void *)((W_)spark & 0x0fffff));
-                      replayTraceCapValue(cap, SPARK_GC, id);
+                      if (TRACE_spark_full) {
+                          debugReplay("cap %d: task %d: spark %d gced %p\n",
+                                      cap->no, cap->running_task->no, id, (void *)((W_)spark & 0x0fffff));
+                          replayTraceCapValue(cap, SPARK_GC, id);
+                      }
 #else
                       traceEventSparkGC(cap);
 #endif
@@ -310,9 +332,11 @@ pruneSparkQueue (Capability *cap)
                   pruned_sparks++; // discard spark
                   cap->spark_stats.fizzled++;
 #ifdef REPLAY
-                  debugReplay("cap %d: task %d: spark %d fizzled %p\n",
-                              cap->no, cap->running_task->no, id, (void *)((W_)spark & 0x0fffff));
-                  replayTraceCapValue(cap, SPARK_FIZZLE, id);
+                  if (TRACE_spark_full) {
+                      debugReplay("cap %d: task %d: spark %d fizzled %p\n",
+                                  cap->no, cap->running_task->no, id, (void *)((W_)spark & 0x0fffff));
+                      replayTraceCapValue(cap, SPARK_FIZZLE, id);
+                  }
 #else
                   traceEventSparkFizzle(cap);
 #endif

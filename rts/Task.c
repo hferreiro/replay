@@ -129,7 +129,7 @@ allocTask (void)
 #if defined(THREADED_RTS)
         task->id = osThreadId();
 #if defined(REPLAY)
-        if (task->id == replay_init_thread) {
+        if (TRACE_spark_full && task->id == replay_init_thread) {
             replay_main_task = task;
         }
 #endif

@@ -741,7 +741,9 @@ StgPtr allocate (Capability *cap, W_ n)
         bd->free = bd->start + n;
         cap->total_allocated += n;
 #ifdef REPLAY
-        cap->replay.real_alloc += n;
+        if (TRACE_spark_full) {
+            cap->replay.real_alloc += n;
+        }
 #endif
         return bd->start;
     }
@@ -795,13 +797,15 @@ StgPtr allocate (Capability *cap, W_ n)
             // advancing CurrentNursery pointer, while keeping it
             // on the nursery list so we don't lose track of it.
 #ifdef REPLAY
-            //replayFixAllocate(cap, bd);
-            if (bd == cap->replay.last_bd) {
-                if (replay_enabled) {
-                    barf("bd %p is replay.last_bd\n", (StgPtr)((W_)bd & 0x0fffff));
-                } else {
-                    debugReplay("cap %d: bd %p is replay.last_bd\n",
-                                cap->no, (StgPtr)((W_)bd & 0x0fffff));
+            if (TRACE_spark_full) {
+                //replayFixAllocate(cap, bd);
+                if (bd == cap->replay.last_bd) {
+                    if (replay_enabled) {
+                        barf("bd %p is replay.last_bd\n", (StgPtr)((W_)bd & 0x0fffff));
+                    } else {
+                        debugReplay("cap %d: bd %p is replay.last_bd\n",
+                                    cap->no, (StgPtr)((W_)bd & 0x0fffff));
+                    }
                 }
             }
 #endif
@@ -810,14 +814,16 @@ StgPtr allocate (Capability *cap, W_ n)
                 bd->link->u.back = cap->r.rCurrentNursery;
             }
 #ifdef REPLAY
-            debugReplay("cap %d: tail bd %p from nursery enqueued\n",
-                        cap->no, (StgPtr)((W_)bd & 0x0fffff));
-            // Emit an event so that that stealing this block will not
-            // interfere with the allocation calculations to stop the thread
-            // at replay time. It can be called from createThread() from the
-            // RTS, which would be harmless.
-            if (cap->in_haskell) {
-                replayTraceCapTag(cap, STEAL_BLOCK);
+            if (TRACE_spark_full) {
+                debugReplay("cap %d: tail bd %p from nursery enqueued\n",
+                            cap->no, (StgPtr)((W_)bd & 0x0fffff));
+                // Emit an event so that that stealing this block will not
+                // interfere with the allocation calculations to stop the thread
+                // at replay time. It can be called from createThread() from the
+                // RTS, which would be harmless.
+                if (cap->in_haskell) {
+                    replayTraceCapTag(cap, STEAL_BLOCK);
+                }
             }
 #endif
         }
@@ -829,7 +835,9 @@ StgPtr allocate (Capability *cap, W_ n)
     bd->free += n;
 
 #ifdef REPLAY
-    cap->replay.real_alloc += n;
+    if (TRACE_spark_full) {
+        cap->replay.real_alloc += n;
+    }
 #endif
 
     IF_DEBUG(sanity, ASSERT(*((StgWord8*)p) == 0xaa));
@@ -895,7 +903,9 @@ allocatePinned (Capability *cap, W_ n)
             // add it to the allocation stats when the block is full
             cap->total_allocated += bd->free - bd->start;
 #ifdef REPLAY
-            cap->replay.real_alloc += bd->free - bd->start;
+            if (TRACE_spark_full) {
+                cap->replay.real_alloc += bd->free - bd->start;
+            }
 #endif
         }
 
@@ -928,13 +938,15 @@ allocatePinned (Capability *cap, W_ n)
         } else {
             // we have a block in the nursery: steal it
 #ifdef REPLAY
-            //replayFixAllocate(cap, bd);
-            if (bd == cap->replay.last_bd) {
-                if (replay_enabled) {
-                    barf("bd %p is replay.last_bd\n", (StgPtr)((W_)bd & 0x0fffff));
-                } else {
-                    debugReplay("cap %d: bd %p is replay.last_bd\n",
-                                cap->no, (StgPtr)((W_)bd & 0x0fffff));
+            if (TRACE_spark_full) {
+                //replayFixAllocate(cap, bd);
+                if (bd == cap->replay.last_bd) {
+                    if (replay_enabled) {
+                        barf("bd %p is replay.last_bd\n", (StgPtr)((W_)bd & 0x0fffff));
+                    } else {
+                        debugReplay("cap %d: bd %p is replay.last_bd\n",
+                                    cap->no, (StgPtr)((W_)bd & 0x0fffff));
+                    }
                 }
             }
 #endif
@@ -944,14 +956,16 @@ allocatePinned (Capability *cap, W_ n)
             }
             cap->r.rNursery->n_blocks -= bd->blocks;
 #ifdef REPLAY
-            debugReplay("cap %d: bd %p stolen from nursery\n",
-                        cap->no, (StgPtr)((W_)bd & 0x0fffff));
-            // Emit an event so that that stealing this block will not
-            // interfere with the allocation calculations to stop the thread
-            // at replay time. It can be called from createThread() from the
-            // RTS, which would be harmless.
-            if (cap->in_haskell) {
-                replayTraceCapTag(cap, STEAL_BLOCK);
+            if (TRACE_spark_full) {
+                debugReplay("cap %d: bd %p stolen from nursery\n",
+                            cap->no, (StgPtr)((W_)bd & 0x0fffff));
+                // Emit an event so that that stealing this block will not
+                // interfere with the allocation calculations to stop the thread
+                // at replay time. It can be called from createThread() from the
+                // RTS, which would be harmless.
+                if (cap->in_haskell) {
+                    replayTraceCapTag(cap, STEAL_BLOCK);
+                }
             }
 #endif
         }

@@ -130,7 +130,9 @@ hs_init_ghc(int *argc, char **argv[], RtsConfig rts_config)
     }
 
 #if defined(REPLAY) && defined(THREADED_RTS)
-    replay_init_thread = osThreadId();
+    if (TRACE_spark_full) {
+        replay_init_thread = osThreadId();
+    }
 #endif
 
     setlocale(LC_CTYPE,"");

@@ -308,14 +308,16 @@ threadPaused(Capability *cap, StgTSO *tso)
 #if defined(REPLAY) && defined(THREADED_RTS)
                 // emit it before any possible 'thread wakeup' event, to
                 // identify when to stop a thread from setupNextEvent()
-                debugReplay("cap %d: task %d: suspendComputation: bh %p\n",
-                            cap->no, cap->running_task->no, (void *)((W_)bh & 0x0fffff));
-                int id = replayFindSparkId(tso, bh);
-                ASSERT(id > 0);
-                replaySaveSparkId(bh, id);
-                debugBelch("cap %d: task %d: suspendComputation: spark %d bh %p\n",
-                           cap->no, cap->running_task->no, id, (void *)((W_)bh & 0x0fffff));
-                replayTraceCapValue(cap, SUSPEND_COMPUTATION, id);
+                if (TRACE_spark_full) {
+                    debugReplay("cap %d: task %d: suspendComputation: bh %p\n",
+                                cap->no, cap->running_task->no, (void *)((W_)bh & 0x0fffff));
+                    int id = replayFindSparkId(tso, bh);
+                    ASSERT(id > 0);
+                    replaySaveSparkId(bh, id);
+                    debugBelch("cap %d: task %d: suspendComputation: spark %d bh %p\n",
+                               cap->no, cap->running_task->no, id, (void *)((W_)bh & 0x0fffff));
+                    replayTraceCapValue(cap, SUSPEND_COMPUTATION, id);
+                }
 #endif
 		suspendComputation(cap,tso,(StgUpdateFrame*)frame);
 

@@ -147,11 +147,13 @@ debugReplay(char *s USED_IF_DEBUG, ...)
 {
 #if defined(DEBUG)
 //#if 0
-    va_list ap;
+    if (replay_enabled || TRACE_spark_full) {
+        va_list ap;
 
-    va_start(ap, s);
-    vfprintf(stderr, s, ap);
-    va_end(ap);
+        va_start(ap, s);
+        vfprintf(stderr, s, ap);
+        va_end(ap);
+    }
 #endif
 }
 
@@ -831,7 +833,7 @@ replayWorkerStart(Capability *cap, Task *task)
     if (replay_enabled) {
         debugReplay("new task %d\n", task->no);
         waitSemaphore(task_replay[task->no]);
-    } else {
+    } else if (TRACE_spark_full) {
         // 'release capability' is cap local and is emitted always after
         // releaseCapability_ which can be the creator of this worker, which will be
         // running and emitting events without the capability lock, so make
@@ -863,11 +865,13 @@ replayMVar(Capability *cap, StgClosure *p, const StgInfoTable *info, int tag, in
         unlockClosure(p, info);
         replayTraceCapValue(cap, tag, value);
     } else {
-        traceCapValue(cap, tag, value);
+        if (TRACE_spark_full) {
+            traceCapValue(cap, tag, value);
 #ifdef DEBUG
-        Event *ev = createCapValueEvent(tag, value);
-        printEvent(cap, ev);
+            Event *ev = createCapValueEvent(tag, value);
+            printEvent(cap, ev);
 #endif
+        }
         unlockClosure(p, info);
     }
 }
@@ -1911,6 +1915,8 @@ replayBlackHole(StgTSO *tso, StgClosure *bh)
 void
 replayThunkUpdated(StgTSO *tso, StgClosure *bh, rtsBool isWHNF)
 {
+    if (!TRACE_spark_full) return;
+
     debugReplay("cap %d: task %d: replayThunkUpdated: blackhole %p already evaluated to %p\n",
                 tso->cap->no, tso->cap->running_task->no,
                 _ptr(bh), _ptr(((StgInd *)bh)->indirectee));
@@ -1950,14 +1956,16 @@ replayMessageBlackHole(StgTSO *tso, StgClosure *bh)
     int id, r;
     MessageBlackHole *msg;
 
-    id = replayFindSparkId(tso, bh);
-    ASSERT(id > 0);
+    if (TRACE_spark_full) {
+        id = replayFindSparkId(tso, bh);
+        ASSERT(id > 0);
 
-    replayTraceCapValue(tso->cap, MSG_BLACKHOLE, id);
+        replayTraceCapValue(tso->cap, MSG_BLACKHOLE, id);
 
-    // save id in the blackhole, it may be used later in replayThunkUpdated
-    if (!replay_enabled) {
-        replaySaveSparkId(bh, id);
+        // save id in the blackhole, it may be used later in replayThunkUpdated
+        if (!replay_enabled) {
+            replaySaveSparkId(bh, id);
+        }
     }
 
     msg = (MessageBlackHole *)allocate(tso->cap, sizeofW(MessageBlackHole));
@@ -2000,7 +2008,7 @@ replayStartGC(void)
     if (replay_enabled) {
         ASSERT(gc_spark_ids == NULL);
         gc_spark_ids = allocHashTable();
-    } else {
+    } else if (TRACE_spark_full) {
         StgTSO *tso;
         nat g;
 
