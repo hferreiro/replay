@@ -1115,14 +1115,16 @@ scheduleProcessInbox (Capability **pcap USED_IF_THREADS)
         RELEASE_LOCK(&cap->lock);
 
 #ifdef REPLAY
-        next = m;
-        r = 0;
-        while (next != (Message *)END_TSO_QUEUE) {
-            next = next->link;
-            r++;
-        }
-        if (r > 0) {
-            replayTraceCapValue(cap, PROCESS_INBOX, r);
+        if (TRACE_spark_full) {
+            next = m;
+            r = 0;
+            while (next != (Message *)END_TSO_QUEUE) {
+                next = next->link;
+                r++;
+            }
+            if (r > 0) {
+                replayTraceCapValue(cap, PROCESS_INBOX, r);
+            }
         }
 #endif
 
@@ -1592,7 +1594,9 @@ scheduleDoGC (Capability **pcap, Task *task USED_IF_THREADS,
     }
 
 #ifdef REPLAY
-    replayTraceCapValue(cap, GC, force_major);
+    if (TRACE_spark_full) {
+        replayTraceCapValue(cap, GC, force_major);
+    }
 #endif
 
     heap_census = scheduleNeedHeapProfile(rtsTrue);
@@ -2564,7 +2568,9 @@ void scheduleWorker (Capability *cap, Task *task)
     cap = schedule(cap,task);
 
 #ifdef REPLAY
-    replayTraceCapTag(cap, SCHED_END);
+    if (TRACE_spark_full) {
+        replayTraceCapTag(cap, SCHED_END);
+    }
 
     if (replay_enabled) {
         replayReleaseCapability(cap, cap);
@@ -2693,7 +2699,9 @@ exitScheduler (rtsBool wait_foreign USED_IF_THREADS)
         // if we loose pending_sync in requestSync() we will keep yielding
         // instead of exiting scheduleDoGC() and do releaseCapability().
         // Recognise this situation with this event in replayRequestSync()
-        replayTraceCapTag(cap, SCHED_END);
+        if (TRACE_spark_full) {
+            replayTraceCapTag(cap, SCHED_END);
+        }
 #endif
         releaseCapability(cap, cap);
     }

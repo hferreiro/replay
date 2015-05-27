@@ -93,10 +93,11 @@ findSpark (Capability *cap)
   debugReplay("cap %d: task %d: findSpark\n", cap->no, cap->running_task->no);
 
 #ifdef REPLAY
-  StgTSO *t = cap->r.rCurrentTSO;
+  StgTSO *t;
   if (replay_enabled) {
       return replayFindSpark(cap);
-  } else {
+  } else if (TRACE_spark_full) {
+      t = cap->r.rCurrentTSO;
       // if it exists, store on the latest spark its id
       if (t->spark_p != NULL) {
           StgClosure *p = t->spark_p;
@@ -130,10 +131,12 @@ findSpark (Capability *cap)
       while (spark != NULL && fizzledSpark(spark)) {
           cap->spark_stats.fizzled++;
 #ifdef REPLAY
-          debugReplay("cap %d: task %d: spark %d fizzled %p\n",
-                      cap->no, cap->running_task->no, id,
-                      (void *)((W_)spark & 0x0fffff));
-          replayTraceCapValue(cap, SPARK_FIZZLE, id);
+          if (TRACE_spark_full) {
+              debugReplay("cap %d: task %d: spark %d fizzled %p\n",
+                          cap->no, cap->running_task->no, id,
+                          (void *)((W_)spark & 0x0fffff));
+              replayTraceCapValue(cap, SPARK_FIZZLE, id);
+          }
           spark = tryStealSpark(cap->sparks, &id);
 #else
           traceEventSparkFizzle(cap);
@@ -145,10 +148,12 @@ findSpark (Capability *cap)
 
           // Post event for running a spark from capability's own pool.
 #ifdef REPLAY
-          debugReplay("cap %d: task %d: run spark %d: %p\n",
-                      cap->no, cap->running_task->no, id, (void *)((W_)spark & 0x0fffff));
-          replaySaveSpark(t, spark, id);
-          replayTraceCapValue(cap, SPARK_RUN, id);
+          if (TRACE_spark_full) {
+              debugReplay("cap %d: task %d: run spark %d: %p\n",
+                          cap->no, cap->running_task->no, id, (void *)((W_)spark & 0x0fffff));
+              replaySaveSpark(t, spark, id);
+              replayTraceCapValue(cap, SPARK_RUN, id);
+          }
 #else
           traceEventSparkRun(cap);
 #endif
@@ -183,10 +188,12 @@ findSpark (Capability *cap)
           while (spark != NULL && fizzledSpark(spark)) {
               cap->spark_stats.fizzled++;
 #ifdef REPLAY
-              debugReplay("cap %d: task %d: spark %d fizzled %p from cap %d\n",
-                          cap->no, cap->running_task->no, id,
-                          (void *)((W_)spark & 0x0fffff), robbed->no);
-              replayTraceCapValue(cap, SPARK_FIZZLE, id);
+              if (TRACE_spark_full) {
+                  debugReplay("cap %d: task %d: spark %d fizzled %p from cap %d\n",
+                              cap->no, cap->running_task->no, id,
+                              (void *)((W_)spark & 0x0fffff), robbed->no);
+                  replayTraceCapValue(cap, SPARK_FIZZLE, id);
+              }
               spark = tryStealSpark(robbed->sparks, &id);
 #else
               traceEventSparkFizzle(cap);
@@ -202,11 +209,13 @@ findSpark (Capability *cap)
           if (spark != NULL) {
               cap->spark_stats.converted++;
 #ifdef REPLAY
-              debugReplay("cap %d: task %d: spark %d stolen: %p from cap %d\n",
-                          cap->no, cap->running_task->no, id,
-                          (void *)((W_)spark & 0x0fffff), robbed->no);
-              replaySaveSpark(t, spark, id);
-              replayTraceCapValue(cap, SPARK_STEAL, id);
+              if (TRACE_spark_full) {
+                  debugReplay("cap %d: task %d: spark %d stolen: %p from cap %d\n",
+                              cap->no, cap->running_task->no, id,
+                              (void *)((W_)spark & 0x0fffff), robbed->no);
+                  replaySaveSpark(t, spark, id);
+                  replayTraceCapValue(cap, SPARK_STEAL, id);
+              }
 #else
               traceEventSparkSteal(cap, robbed->no);
 #endif
@@ -404,8 +413,10 @@ initCapability( Capability *cap, nat i )
     traceCapCreate(cap);
     traceCapsetAssignCap(CAPSET_OSPROCESS_DEFAULT, i);
     traceCapsetAssignCap(CAPSET_CLOCKDOMAIN_DEFAULT, i);
-#if defined(THREADED_RTS) && !defined(REPLAY)
-    traceSparkCounters(cap);
+#if defined(THREADED_RTS)
+    if (!TRACE_spark_full) {
+        traceSparkCounters(cap);
+    }
 #endif
 }
 
