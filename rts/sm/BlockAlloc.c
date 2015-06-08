@@ -22,6 +22,8 @@
 #include "RtsUtils.h"
 #include "BlockAlloc.h"
 #include "OSMem.h"
+#include "Trace.h"
+#include "Replay.h"
 
 #include <string.h>
 
@@ -478,7 +480,16 @@ allocGroup_lock(W_ n)
     bdescr *bd;
     ACQUIRE_SM_LOCK;
     bd = allocGroup(n);
+#if defined(REPLAY) && defined(THREADED_RTS)
+    ASSERT(myTask());
+    traceCapValue(myTask()->cap, STEAL_BLOCK, (W_)bd);
     RELEASE_SM_LOCK;
+    if (replay_enabled) {
+        replayCapValue(myTask()->cap, STEAL_BLOCK, (W_)bd);
+    }
+#else
+    RELEASE_SM_LOCK;
+#endif
     return bd;
 }
 
@@ -494,7 +505,16 @@ allocBlock_lock(void)
     bdescr *bd;
     ACQUIRE_SM_LOCK;
     bd = allocBlock();
+#if defined(REPLAY) && defined(THREADED_RTS)
+    ASSERT(myTask());
+    traceCapValue(myTask()->cap, STEAL_BLOCK, (W_)bd);
     RELEASE_SM_LOCK;
+    if (replay_enabled) {
+        replayCapValue(myTask()->cap, STEAL_BLOCK, (W_)bd);
+    }
+#else
+    RELEASE_SM_LOCK;
+#endif
     return bd;
 }
 
@@ -639,7 +659,16 @@ freeGroup_lock(bdescr *p)
 {
     ACQUIRE_SM_LOCK;
     freeGroup(p);
+#if defined(REPLAY) && defined(THREADED_RTS)
+    ASSERT(myTask());
+    traceCapValue(myTask()->cap, STEAL_BLOCK, (W_)p);
     RELEASE_SM_LOCK;
+    if (replay_enabled) {
+        replayCapValue(myTask()->cap, STEAL_BLOCK, (W_)p);
+    }
+#else
+    RELEASE_SM_LOCK;
+#endif
 }
 
 void
@@ -658,7 +687,16 @@ freeChain_lock(bdescr *bd)
 {
     ACQUIRE_SM_LOCK;
     freeChain(bd);
+#if defined(REPLAY) && defined(THREADED_RTS)
+    ASSERT(myTask());
+    traceCapValue(myTask()->cap, STEAL_BLOCK, (W_)bd);
     RELEASE_SM_LOCK;
+    if (replay_enabled) {
+        replayCapValue(myTask()->cap, STEAL_BLOCK, (W_)bd);
+    }
+#else
+    RELEASE_SM_LOCK;
+#endif
 }
 
 static void

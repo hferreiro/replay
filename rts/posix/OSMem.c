@@ -12,6 +12,8 @@
 #include "Rts.h"
 
 #include "RtsUtils.h"
+#include "Replay.h"
+#include "Trace.h"
 #include "sm/OSMem.h"
 
 #ifdef HAVE_UNISTD_H
@@ -200,6 +202,14 @@ osGetMBlocks(nat n)
 {
   caddr_t ret;
   W_ size = MBLOCK_SIZE * (W_)n;
+  Capability *cap USED_IF_REPLAY USED_IF_THREADS;
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+  if (replay_enabled && myTask() != NULL) {
+      cap = rts_unsafeGetMyCapability();
+      next_request = (caddr_t)replayCapTag(cap, STEAL_BLOCK);
+  }
+#endif
 
   if (next_request == 0) {
       // use gen_map_mblocks the first time.
@@ -221,6 +231,13 @@ osGetMBlocks(nat n)
           ret = gen_map_mblocks(size);
       }
   }
+#if defined(REPLAY) && defined(THREADED_RTS)
+  if (myTask() != NULL) {
+      cap = rts_unsafeGetMyCapability();
+      traceCapValue(cap, STEAL_BLOCK, (W_)ret);
+  }
+#endif
+
   // Next time, we'll try to allocate right after the block we just got.
   // ToDo: check that we haven't already grabbed the memory at next_request
   next_request = ret + size;

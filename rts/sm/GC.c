@@ -962,6 +962,9 @@ any_work (void)
         ws = &gct->gens[g];
         if (ws->todo_large_objects) return rtsTrue;
         if (!looksEmptyWSDeque(ws->todo_q)) return rtsTrue;
+#if defined(REPLAY) && defined(THREADED_RTS)
+        if (replay_enabled && replayGCContinue()) return rtsTrue;
+#endif
         if (ws->todo_overflow) return rtsTrue;
     }
 
@@ -974,6 +977,9 @@ any_work (void)
             for (g = RtsFlags.GcFlags.generations-1; g >= 0; g--) {
                 ws = &gc_threads[n]->gens[g];
                 if (!looksEmptyWSDeque(ws->todo_q)) return rtsTrue;
+#if defined(REPLAY) && defined(THREADED_RTS)
+                if (replay_enabled && replayGCContinue()) return rtsTrue;
+#endif
             }
         }
     }
@@ -1348,7 +1354,7 @@ static void
 stash_mut_list (Capability *cap, nat gen_no)
 {
     cap->saved_mut_lists[gen_no] = cap->mut_lists[gen_no];
-    cap->mut_lists[gen_no] = allocBlock_sync();
+    cap->mut_lists[gen_no] = allocBlock(); // XXX: check!!
 }
 
 /* ----------------------------------------------------------------------------
@@ -1412,7 +1418,15 @@ collect_gct_blocks (void)
             ws->scavd_list = NULL;
             ws->n_scavd_blocks = 0;
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+            traceCapValue(gct->cap, STEAL_BLOCK, (W_)ws->gen->blocks);
             RELEASE_SPIN_LOCK(&ws->gen->sync);
+            if (replay_enabled) {
+                replayCapValue(gct->cap, STEAL_BLOCK, (W_)ws->gen->blocks);
+            }
+#else
+            RELEASE_SPIN_LOCK(&ws->gen->sync);
+#endif
         }
     }
 }
