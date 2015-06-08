@@ -945,10 +945,25 @@ yieldCapability (Capability** pCap, Task *task, rtsBool gcAllowed)
 void
 prodCapability (Capability *cap, Task *task)
 {
+    debugReplay("cap %d: task %d: prodCapability %d\n", task->cap->no, task->no, cap->no);
+
+#ifdef REPLAY
+    if (replay_enabled) {
+        replayProdCapability(cap, task);
+        return;
+    }
+#endif
+
     ACQUIRE_LOCK(&cap->lock);
     if (!cap->running_task) {
         cap->running_task = task;
-        releaseCapability_(cap,cap,rtsTrue);
+#ifdef REPLAY
+        traceTaskAcquireCap(cap, task);
+#endif
+        releaseCapability_(task->cap,cap,rtsTrue);
+#ifdef REPLAY
+        traceTaskReleaseCap(cap, task);
+#endif
     }
     RELEASE_LOCK(&cap->lock);
 }

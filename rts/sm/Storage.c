@@ -27,6 +27,7 @@
 #include "RetainerProfile.h"        // for counting memory blocks (memInventory)
 #include "OSMem.h"
 #include "Trace.h"
+#include "Replay.h"
 #include "GC.h"
 #include "Evac.h"
 #if defined(ios_HOST_OS)

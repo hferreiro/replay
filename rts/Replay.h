@@ -114,6 +114,7 @@ void replayActivateSpark(Capability *cap);
 void replayPushWork(Capability *cap, Task *task);
 void replayDetectDeadlock(Capability **pCap, Task *task);
 void replayYield(Capability **pCap, Task *task);
+void replayProdCapability(Capability *cap, Task *task);
 rtsBool replayTryGrabCapability(Capability *cap, Task *task);
 nat replayRequestSync(Capability **pCap, Task *task, nat sync_type);
 void replayExitScheduler(Task *task);

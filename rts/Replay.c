@@ -54,6 +54,7 @@ rtsReplayEnabled(void)
 #ifdef THREADED_RTS
 OSThreadId  replay_init_thread;
 int         replay_main_task = -1;
+static int  replay_main_gc_task = -1;
 
 static Semaphore replay_sched;
 static Semaphore no_task;
@@ -577,6 +578,37 @@ replayEvent(Capability *cap, Event *ev)
         }
         break;
     }
+#ifdef THREADED_RTS
+    case EVENT_HEAP_SIZE:
+    {
+        if (!equalEvents(ev, read)) {
+            failedMatch(cap, ev, read);
+        }
+
+        // last event from main GC task
+        ASSERT(replay_main_gc_task != -1);
+        replay_main_gc_task = -1;
+        break;
+    }
+    case EVENT_GC_STATS_GHC:
+    {
+        EventGcStatsGHC *egsg, *egsg_read;
+
+        egsg = (EventGcStatsGHC *)ev;
+        egsg_read = (EventGcStatsGHC *)read;
+        // ignore par_max_copied
+        if (egsg->capset != egsg_read->capset ||
+            egsg->gen != egsg_read->gen ||
+            egsg->copied != egsg_read->copied ||
+            egsg->slop != egsg_read->slop ||
+            egsg->fragmentation != egsg_read->fragmentation ||
+            egsg->par_n_threads != egsg_read->par_n_threads ||
+            egsg->par_tot_copied != egsg_read->par_tot_copied) {
+            failedMatch(cap, ev, read);
+        }
+        break;
+    }
+#endif
     case EVENT_TASK_CREATE:
     {
         EventTaskCreate *etc, *etc_read;
@@ -1234,6 +1266,21 @@ yieldCapability_(Capability **pCap, Task *task)
     *pCap = cap;
 }
 
+void
+replayProdCapability(Capability *cap, Task *task)
+{
+    CapEvent *ce;
+
+    ce = readEvent();
+    ASSERT(ce != NULL);
+    if (ce->ev->header.tag == EVENT_TASK_ACQUIRE_CAP &&
+        ce->capno == cap->no) {
+        cap->running_task = task;
+        traceTaskAcquireCap(cap, task);
+        replayReleaseCapability(task->cap, cap);
+    }
+}
+
 rtsBool
 replayTryGrabCapability(Capability *cap, Task *task)
 {
@@ -1496,6 +1543,10 @@ replayRequestSync(Capability **pCap, Task *task, nat sync_type)
         stg_exit(EXIT_INTERNAL_ERROR);
     }
 
+    if (prev_pending_sync == 0) {
+        ASSERT(replay_main_gc_task == -1);
+        replay_main_gc_task = task->no;
+    }
     return prev_pending_sync;
 }
 
@@ -1818,10 +1869,17 @@ replayGCContinue(void)
 static int
 eventTask(nat capno, Event *ev)
 {
-    int taskid;
+    int taskid = -1;
 
-    taskid = -1;
     switch(ev->header.tag) {
+    // always emitted by main GC task
+    case EVENT_HEAP_ALLOCATED:
+        // except when shutting down
+        if (hs_init_count != 0) {
+            ASSERT(replay_main_gc_task != -1);
+            taskid = replay_main_gc_task;
+        }
+        break;
     // task is not running on its capability
     case EVENT_TASK_DELETE:
         taskid = ((EventTaskDelete *)ev)->task;
@@ -1855,6 +1913,11 @@ eventTask(nat capno, Event *ev)
             // shutting down
             ASSERT(replay_main_task != -1);
             taskid = replay_main_task;
+#ifdef THREADED_RTS
+        } else if (replay_main_gc_task != -1) {
+            // GC
+            taskid = replay_main_gc_task;
+#endif
         } else {
             barf("eventTask: cannot find a task to run next");
         }
