@@ -27,6 +27,7 @@
 #include "RetainerProfile.h"        // for counting memory blocks (memInventory)
 #include "OSMem.h"
 #include "Trace.h"
+#include "Replay.h"
 #include "GC.h"
 #include "Evac.h"
 #if defined(ios_HOST_OS)
@@ -718,7 +719,15 @@ StgPtr allocate (Capability *cap, W_ n)
         dbl_link_onto(bd, &g0->large_objects);
         g0->n_large_blocks += bd->blocks; // might be larger than req_blocks
         g0->n_new_large_words += n;
+#if defined(REPLAY) && defined(THREADED_RTS)
+        traceCapValue(cap, STEAL_BLOCK, (W_)bd);
         RELEASE_SM_LOCK;
+        if (replay_enabled) {
+            replayCapValue(cap, STEAL_BLOCK, (W_)bd);
+        }
+#else
+        RELEASE_SM_LOCK;
+#endif
         initBdescr(bd, g0, g0);
         bd->flags = BF_LARGE;
         bd->free = bd->start + n;
@@ -747,7 +756,15 @@ StgPtr allocate (Capability *cap, W_ n)
             ACQUIRE_SM_LOCK;
             bd = allocBlock();
             cap->r.rNursery->n_blocks++;
+#if defined(REPLAY) && defined(THREADED_RTS)
+            traceCapValue(cap, STEAL_BLOCK, (W_)bd);
             RELEASE_SM_LOCK;
+            if (replay_enabled) {
+                replayCapValue(cap, STEAL_BLOCK, (W_)bd);
+            }
+#else
+            RELEASE_SM_LOCK;
+#endif
             initBdescr(bd, g0, g0);
             bd->flags = 0;
             // If we had to allocate a new block, then we'll GC
@@ -908,7 +925,15 @@ allocatePinned (Capability *cap, W_ n)
             // collect_pinned_object_blocks in the GC.
             ACQUIRE_SM_LOCK;
             bd = allocBlock();
+#if defined(REPLAY) && defined(THREADED_RTS)
+            traceCapValue(cap, STEAL_BLOCK, (W_)bd);
             RELEASE_SM_LOCK;
+            if (replay_enabled) {
+                replayCapValue(cap, STEAL_BLOCK, (W_)bd);
+            }
+#else
+            RELEASE_SM_LOCK;
+#endif
             initBdescr(bd, g0, g0);
         } else {
             // we have a block in the nursery: steal it

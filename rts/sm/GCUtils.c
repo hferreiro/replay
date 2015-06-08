@@ -24,6 +24,10 @@
 #include "Trace.h"
 #ifdef THREADED_RTS
 #include "WSDeque.h"
+#ifdef REPLAY
+#include "Replay.h"
+#include "eventlog/EventLog.h"
+#endif
 #endif
 
 #ifdef THREADED_RTS
@@ -36,7 +40,15 @@ allocBlock_sync(void)
     bdescr *bd;
     ACQUIRE_SPIN_LOCK(&gc_alloc_block_sync);
     bd = allocBlock();
+#if defined(REPLAY) && defined(THREADED_RTS)
+    traceCapValue(gct->cap, STEAL_BLOCK, (W_)bd);
     RELEASE_SPIN_LOCK(&gc_alloc_block_sync);
+    if (replay_enabled) {
+        replayCapValue(gct->cap, STEAL_BLOCK, (W_)bd);
+    }
+#else
+    RELEASE_SPIN_LOCK(&gc_alloc_block_sync);
+#endif
     return bd;
 }
 
@@ -46,7 +58,15 @@ allocGroup_sync(nat n)
     bdescr *bd;
     ACQUIRE_SPIN_LOCK(&gc_alloc_block_sync);
     bd = allocGroup(n);
+#if defined(REPLAY) && defined(THREADED_RTS)
+    traceCapValue(gct->cap, STEAL_BLOCK, (W_)bd);
     RELEASE_SPIN_LOCK(&gc_alloc_block_sync);
+    if (replay_enabled) {
+        replayCapValue(gct->cap, STEAL_BLOCK, (W_)bd);
+    }
+#else
+    RELEASE_SPIN_LOCK(&gc_alloc_block_sync);
+#endif
     return bd;
 }
 
@@ -80,7 +100,15 @@ freeChain_sync(bdescr *bd)
 {
     ACQUIRE_SPIN_LOCK(&gc_alloc_block_sync);
     freeChain(bd);
+#if defined(REPLAY) && defined(THREADED_RTS)
+    traceCapValue(gct->cap, STEAL_BLOCK, (W_)bd);
     RELEASE_SPIN_LOCK(&gc_alloc_block_sync);
+    if (replay_enabled) {
+        replayCapValue(gct->cap, STEAL_BLOCK, (W_)bd);
+    }
+#else
+    RELEASE_SPIN_LOCK(&gc_alloc_block_sync);
+#endif
 }
 
 /* -----------------------------------------------------------------------------
@@ -105,6 +133,9 @@ grab_local_todo_block (gen_workspace *ws)
     if (bd != NULL)
     {
 	ASSERT(bd->link == NULL);
+#if defined(REPLAY) && defined(THREADED_RTS)
+        replayTraceCapValue(gct->cap, STEAL_BLOCK, (W_)bd);
+#endif
 	return bd;
     }
 
@@ -123,6 +154,9 @@ steal_todo_block (nat g)
         if (n == gct->thread_index) continue;
         bd = stealWSDeque(gc_threads[n]->gens[g].todo_q);
         if (bd) {
+#if defined(REPLAY) && defined(THREADED_RTS)
+            replayTraceCapValue(gct->cap, STEAL_BLOCK, (W_)bd);
+#endif
             return bd;
         }
     }
@@ -208,8 +242,20 @@ todo_block_full (nat size, gen_workspace *ws)
         ws->todo_free + size <= bd->start + bd->blocks * BLOCK_SIZE_W
         && ws->todo_free < ws->todo_bd->start + BLOCK_SIZE_W;
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+    if (replay_enabled) {
+        CapEvent *ce = readEvent();
+        if (isEventCapValue(ce, STEAL_BLOCK) &&
+            ((EventCapValue *)ce->ev)->value == 1) {
+            urgent_to_push = 0;
+        }
+    }
+#endif
     if (!urgent_to_push && can_extend)
     {
+#if defined(REPLAY) && defined(THREADED_RTS)
+        replayTraceCapValue(gct->cap, STEAL_BLOCK, 1);
+#endif
         ws->todo_lim = stg_min(bd->start + bd->blocks * BLOCK_SIZE_W,
                                ws->todo_lim + stg_max(WORK_UNIT_WORDS,size));
         debugTrace(DEBUG_gc, "increasing limit for %p to %p",
@@ -255,6 +301,9 @@ todo_block_full (nat size, gen_workspace *ws)
                   gen->no, dequeElements(ws->todo_q));
 
             if (!pushWSDeque(ws->todo_q, bd)) {
+#if defined(REPLAY) && defined(THREADED_RTS)
+                replayTraceCapValue(gct->cap, STEAL_BLOCK, (W_)bd);
+#endif
                 bd->link = ws->todo_overflow;
                 ws->todo_overflow = bd;
                 ws->n_todo_overflow++;
