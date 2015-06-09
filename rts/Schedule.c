@@ -382,11 +382,10 @@ schedule (Capability *initialCapability, Task *task)
 #if defined(REPLAY) && defined(THREADED_RTS)
     if (replay_enabled) {
         sched_state_ = replayCapTag(cap, SCHED_LOOP);
-        if (sched_state_ > SCHED_RUNNING) {
-            replayTraceCapValue(cap, SCHED_LOOP, sched_state_);
-            deleteThread(cap, t);
+        if (sched_state < sched_state_) {
+            sched_state = sched_state_;
         }
-    } else
+    }
 #endif
     // If we're shutting down, and this thread has not yet been
     // killed, kill it now.  This sometimes happens when a finalizer
