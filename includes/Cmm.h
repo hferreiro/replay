@@ -550,7 +550,7 @@
  * the value from GHC, but it seems like too much trouble to do that
  * for StgThunkHeader.
  */
-#define SIZEOF_StgThunkHeader SIZEOF_StgHeader+SIZEOF_StgSMPThunkHeader
+#define SIZEOF_StgThunkHeader SIZEOF_StgHeader+SIZEOF_StgSMPThunkHeader+SIZEOF_StgSMPThunkHeader
 
 #define StgThunk_payload(__ptr__,__ix__) \
     W_[__ptr__+SIZEOF_StgThunkHeader+ WDS(__ix__)]

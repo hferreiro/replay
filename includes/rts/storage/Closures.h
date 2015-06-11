@@ -63,6 +63,7 @@ typedef struct {
     StgProfHeader         prof;
 #endif
     StgSMPThunkHeader     smp;
+    StgWord               shared;
 } StgThunkHeader;
 
 #define THUNK_EXTRA_HEADER_W (sizeofW(StgThunkHeader)-sizeofW(StgHeader))

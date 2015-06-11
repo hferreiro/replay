@@ -287,7 +287,7 @@ arrPtrsHdrSize dflags
 -- splat the payload.
 thunkHdrSize :: DynFlags -> WordOff
 thunkHdrSize dflags = fixedHdrSize dflags + smp_hdr
-        where smp_hdr = sIZEOF_StgSMPThunkHeader dflags `quot` wORD_SIZE dflags
+        where smp_hdr = (2*sIZEOF_StgSMPThunkHeader dflags) `quot` wORD_SIZE dflags
 
 
 nonHdrSize :: SMRep -> WordOff
@@ -304,8 +304,8 @@ closureTypeHdrSize :: DynFlags -> ClosureTypeInfo -> WordOff
 closureTypeHdrSize dflags ty = case ty of
                   Thunk{}         -> thunkHdrSize dflags
                   ThunkSelector{} -> thunkHdrSize dflags
-                  BlackHole{}     -> thunkHdrSize dflags
-                  IndStatic{}     -> thunkHdrSize dflags
+                  BlackHole{}     -> thunkHdrSize dflags - sIZEOF_StgSMPThunkHeader dflags
+                  IndStatic{}     -> thunkHdrSize dflags - sIZEOF_StgSMPThunkHeader dflags
                   _               -> fixedHdrSize dflags
         -- All thunks use thunkHdrSize, even if they are non-updatable.
         -- this is because we don't have separate closure types for
