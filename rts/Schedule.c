@@ -541,6 +541,13 @@ run_thread:
     t->saved_winerror = GetLastError();
 #endif
 
+#ifdef REPLAY
+    if (TRACE_spark_full && ret == ThreadFinished) {
+        // it did not go though threadPaused()
+        replaySaveAlloc(cap);
+    }
+#endif
+
     if (ret == ThreadBlocked) {
         if (t->why_blocked == BlockedOnBlackHole) {
             StgTSO *owner = blackHoleOwner(t->block_info.bh->bh);
@@ -1739,6 +1746,13 @@ scheduleDoGC (Capability **pcap, Task *task USED_IF_THREADS,
         // wrong leads to a rare and hard to debug deadlock!
 
         for (i=0; i < n_capabilities; i++) {
+#if defined(REPLAY) && defined(THREADED_RTS)
+            if (replay_enabled && i != cap->no) {
+                ASSERT(!idle_cap[i]);
+                gc_threads[i]->idle = rtsTrue;
+                continue;
+            }
+#endif
             gc_threads[i]->idle = idle_cap[i];
             capabilities[i]->idle++;
         }
@@ -1781,6 +1795,10 @@ delete_threads_and_gc:
 #endif
 	deleteAllThreads(cap);
 #if defined(THREADED_RTS)
+#ifdef REPLAY
+        // discarded in pruneSparkQueue, after resetting them
+        if (!TRACE_spark_full)
+#endif
         // Discard all the sparks from every Capability.  Why?
         // They'll probably be GC'd anyway since we've killed all the
         // threads.  It just avoids the GC having to do any work to
@@ -1864,8 +1882,11 @@ delete_threads_and_gc:
     }
 
 #if defined(THREADED_RTS)
+#ifdef REPLAY
+    if (!TRACE_spark_full)
+#endif
     // Stable point where we can do a global check on our spark counters
-    ASSERT(checkSparkCountInvariant());
+    { ASSERT(checkSparkCountInvariant()); }
 #endif
 
     // The heap census itself is done during GarbageCollect().
@@ -2283,9 +2304,25 @@ deleteAllThreads ( Capability *cap )
     nat g;
 
     debugTrace(DEBUG_sched,"deleting all threads");
+#ifdef REPLAY
+    if (replay_enabled) {
+        while (1) {
+            CapEvent *ce = readEvent();
+            if (!isEventCapValue(ce, DELETE_THREAD)) {
+                break;
+            }
+            t = findThread(((EventCapValue *)ce->ev)->value);
+            replayTraceCapValue(cap, DELETE_THREAD, t->id);
+            deleteThread(cap, t);
+        }
+    } else
+#endif
     for (g = 0; g < RtsFlags.GcFlags.generations; g++) {
         for (t = generations[g].threads; t != END_TSO_QUEUE; t = next) {
                 next = t->global_link;
+#ifdef REPLAY
+                replayTraceCapValue(cap, DELETE_THREAD, t->id);
+#endif
                 deleteThread(cap,t);
         }
     }
@@ -2384,12 +2421,13 @@ suspendThread (StgRegTable *reg, rtsBool interruptible)
 
   debugReplay("THREAD_SUSPENDED_FOREIGN_CALL %" FMT_Word "\n", (W_)tso->id);
 
-  traceEventStopThread(cap, tso, THREAD_SUSPENDED_FOREIGN_CALL, 0);
-
   // XXX this might not be necessary --SDM
   tso->what_next = ThreadRunGHC;
 
   threadPaused(cap,tso);
+
+  // after threadPaused() so that replaySaveAlloc() is called
+  traceEventStopThread(cap, tso, THREAD_SUSPENDED_FOREIGN_CALL, 0);
 
   if (interruptible) {
     tso->why_blocked = BlockedOnCCall_Interruptible;
@@ -2883,6 +2921,7 @@ raiseExceptionHelper (StgRegTable *reg, StgTSO *tso, StgClosure *exception)
     StgThunk *raise_closure = NULL;
     StgPtr p, next;
     StgRetInfoTable *info;
+    StgClosure *thunk USED_IF_DEBUG;
     //
     // This closure represents the expression 'raise# E' where E
     // is the exception raise.  It is used to overwrite all the
@@ -2920,9 +2959,20 @@ raiseExceptionHelper (StgRegTable *reg, StgTSO *tso, StgClosure *exception)
 		    (StgThunk *)allocate(cap,sizeofW(StgThunk)+1);
                 SET_HDR(raise_closure, &stg_raise_info, cap->r.rCCCS);
 		raise_closure->payload[0] = exception;
+#if defined(REPLAY) && defined(THREADED_RTS)
+            if (TRACE_spark_full) {
+                ((StgInd *)raise_closure)->indirectee =
+                    REPLAY_SET_ID(newThunkId(cap), tso);
+            }
+#endif
 	    }
-            updateThunk(cap, tso, ((StgUpdateFrame *)p)->updatee,
-                        (StgClosure *)raise_closure);
+            thunk = updateThunk(cap, tso, ((StgUpdateFrame *)p)->updatee,
+                                (StgClosure *)raise_closure);
+            if (thunk != NULL) {
+                barf("raiseExceptionHelper: %p -> %p",
+                     thunk, ((StgInd *)thunk)->indirectee);
+            }
+            ASSERT(thunk == NULL);
 	    p = next;
 	    continue;
 

@@ -344,7 +344,7 @@ wanteds = concat
 
           ,fieldOffset Both  "Capability" "r"
           ,fieldOffset C     "Capability" "lock"
-          ,structField C     "Capability" "no"
+          ,structField Both  "Capability" "no"
           ,structField C     "Capability" "mut_lists"
           ,structField C     "Capability" "context_switch"
           ,structField C     "Capability" "interrupt"
@@ -353,6 +353,7 @@ wanteds = concat
           ,structField_ Both "Capability_replay_hp_adjust" "Capability" "replay.hp_adjust"
           ,structField_ C    "Capability_replay_hp_alloc" "Capability" "replay.hp_alloc"
           ,structField_ Both "Capability_replay_bd" "Capability" "replay.bd"
+          ,fieldOffset_ Haskell "Capability_spark_id" "Capability" "replay.spark_id"
 
           ,structField Both "bdescr" "start"
           ,structField Both "bdescr" "free"
@@ -405,7 +406,7 @@ wanteds = concat
           ,closureField  C    "StgTSO"      "why_blocked"
           ,closureField  C    "StgTSO"      "block_info"
           ,closureField  C    "StgTSO"      "blocked_exceptions"
-          ,closureField  C    "StgTSO"      "id"
+          ,closureField  Both "StgTSO"      "id"
           ,closureField  C    "StgTSO"      "cap"
           ,closureField  C    "StgTSO"      "saved_errno"
           ,closureField  C    "StgTSO"      "trec"

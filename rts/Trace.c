@@ -168,7 +168,7 @@ void tracingAddCapapilities (nat from, nat to)
 static void tracePreface (void)
 {
 #ifdef THREADED_RTS
-    debugBelch("%12lx: ", (unsigned long)osThreadId());
+    //debugBelch("%12lx: ", (unsigned long)osThreadId());
 #endif
     if (RtsFlags.TraceFlags.timestamp) {
 	debugBelch("%9" FMT_Word64 ": ", stat_getElapsedTime());
@@ -262,12 +262,14 @@ void traceSchedEvent_ (Capability *cap, EventTypeNum tag,
         ts = postSchedEvent(cap,tag,tso ? tso->id : 0, info1, info2);
     }
 
+#ifdef REPLAY
     if (TRACE_spark_full && tag == EVENT_RUN_THREAD) {
-        // before replay because replaying RUN_THREAD with a STOP_THREAD
-        // inmediately afterwards will require the saved Hp to calculate the
-        // yield block
+        // before 'run thread' because replaying 'run thread' with a 'stop
+        // thread' inmediately afterwards will require the saved Hp to
+        // calculate the yielding block
         replaySaveHp(cap);
     }
+#endif
 
     if (replay_enabled) {
         Event *ev = createSchedEvent(tag, tso, info1, info2);
@@ -281,11 +283,6 @@ void traceSchedEvent_ (Capability *cap, EventTypeNum tag,
         printEvent(cap, ev);
     }
 #endif
-
-    if (TRACE_spark_full && tag == EVENT_STOP_THREAD) {
-        // after replay because it emits EVENT_CAP_ALLOC
-        replaySaveAlloc(cap);
-    }
 }
 
 #ifdef DEBUG
@@ -852,11 +849,14 @@ void traceTaskDelete_ (Capability *cap, Task *task)
 #ifdef DEBUG
 static void traceCap_stderr_ap(Capability *cap, const char *msg, va_list ap)
 {
+    char str[50];
+    sprintf(str, "cap %d: %s", cap->no, msg);
     ACQUIRE_LOCK(&trace_utx);
 
     tracePreface();
-    debugBelch("cap %d: ", cap->no);
-    vdebugBelch(msg,ap);
+    //debugBelch("cap %d: ", cap->no);
+    //vdebugBelch(msg,ap);
+    vdebugBelch(str,ap);
     debugBelch("\n");
 
     RELEASE_LOCK(&trace_utx);
@@ -1156,6 +1156,7 @@ void traceCapValue_stderr(Capability *cap,
                           W_          value)
 {
     const char *str;
+    rtsBool ptr USED_IF_THREADS = rtsFalse;
     switch (tag) {
     case CTXT_SWITCH:
         str = "context switch";
@@ -1184,14 +1185,9 @@ void traceCapValue_stderr(Capability *cap,
     case STEAL_BLOCK:
         str = "steal block";
         break;
+#ifdef THREADED_RTS
     case SPARK_CREATE:
         str = "create spark";
-        break;
-    case SPARK_DUD:
-        str = "spark duplicated";
-        break;
-    case SPARK_OVERFLOW:
-        str = "spark overflowed";
         break;
     case SPARK_RUN:
         str = "run spark";
@@ -1199,31 +1195,85 @@ void traceCapValue_stderr(Capability *cap,
     case SPARK_STEAL:
         str = "steal spark";
         break;
+    case SPARK_DUD:
+        str = "spark duplicated";
+        break;
+    case SPARK_OVERFLOW:
+        str = "spark overflowed";
+        break;
+    case BH_THUNK:
+        str = "blakchole thunk";
+        ptr = rtsTrue;
+        break;
     case SPARK_FIZZLE:
         str = "fizzle spark";
+        ptr = rtsTrue;
         break;
     case SPARK_GC:
         str = "GC spark";
+        ptr = rtsTrue;
         break;
     case SUSPEND_COMPUTATION:
         str = "suspend computation";
+        ptr = rtsTrue;
         break;
     case MSG_BLACKHOLE:
         str = "message blackhole";
+        if (REPLAY_ATOM(value) == REPLAY_ID_ATOM) {
+            value = REPLAY_ID(value);
+        } else {
+            ptr = rtsTrue;
+        }
         break;
-    case THUNK_UPDATED:
-        str = "thunk updated";
+    case DELETE_THREAD:
+        str = "delete thread";
         break;
+    case PRUNE_SPARK_QUEUE:
+        str = "prune spark queue";
+        break;
+    case BH_WHNF:
+        str = "blackhole whnf";
+        ptr = rtsTrue;
+        break;
+    case BLOCKED_ON_TSO:
+        str = "blocked on thread";
+        break;
+    case BLOCKED_ON_BQ:
+        str = "blocked on blocking queue";
+        break;
+    case GC_END:
+        str = "gc end";
+        break;
+    case THUNK_UPDATE:
+        str = "thunk update";
+        ptr = rtsTrue;
+        break;
+    case COLLISION_WHNF:
+        str = "collision whnf";
+        ptr = rtsTrue;
+        break;
+    case COLLISION_OTHER:
+        str = "collision other";
+        ptr = rtsTrue;
+        break;
+#endif
     default:
         barf("traceCapValue_stderr: unknown capability tag in event");
     }
-    traceCap_stderr(cap, "tag: %s, value: %" FMT_Word, str, value);
+#ifdef THREADED_RTS
+    if (ptr) {
+        traceCap_stderr(cap, "tag: %s, bh %p", str, (StgPtr)value);
+    } else
+#endif
+    {
+        traceCap_stderr(cap, "tag: %s, value: %" FMT_Word, str, value);
+    }
 }
 #endif
 
-void traceCapValue_(Capability *cap USED_IF_DEBUG,
-                    nat         tag USED_IF_DEBUG,
-                    W_          value USED_IF_DEBUG)
+void traceCapValue_(Capability *cap,
+                    nat         tag,
+                    W_          value)
 {
 #ifdef DEBUG
     if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
@@ -1334,6 +1384,97 @@ void traceTaskReturnCap_(Task *task, Capability *cap)
 #ifdef DEBUG
     else {
         printEvent(NULL, createTaskReturnCapEvent(taskid, cap->no));
+    }
+#endif
+}
+
+#ifdef DEBUG
+void traceEnterThunk_stderr(Capability *cap, W_ id, StgPtr ptr)
+{
+    traceCap_stderr(cap, "enter thunk %p id %d", ptr, id);
+}
+#endif
+
+void traceEnterThunk_(Capability *cap, W_ id, StgPtr ptr)
+{
+#ifdef DEBUG
+    if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
+        traceEnterThunk_stderr(cap, id, ptr);
+    } else
+#endif
+    {
+        if (eventlog_enabled) {
+            postEnterThunkEvent(cap, id, ptr);
+        }
+    }
+
+    if (replay_enabled) {
+        replayEvent(cap, createEnterThunkEvent(id, ptr));
+    }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createEnterThunkEvent(id, ptr));
+    }
+#endif
+}
+
+#ifdef DEBUG
+void tracePtrMove_stderr(Capability *cap, StgPtr ptr, StgPtr new_ptr)
+{
+    traceCap_stderr(cap, "move ptr %p to %p",
+                    REPLAY_PTR(ptr), REPLAY_PTR(new_ptr));
+}
+#endif
+
+void tracePtrMove_(Capability *cap, StgPtr ptr, StgPtr new_ptr)
+{
+#ifdef DEBUG
+    if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
+        tracePtrMove_stderr(cap, ptr, new_ptr);
+    } else
+#endif
+    {
+        if (eventlog_enabled) {
+            postPtrMoveEvent(cap, ptr, new_ptr);
+        }
+    }
+
+    if (replay_enabled) {
+        replayEvent(cap, createPtrMoveEvent(ptr, new_ptr));
+    }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createPtrMoveEvent(ptr, new_ptr));
+    }
+#endif
+}
+
+#ifdef DEBUG
+void traceMsgBlackHole_stderr(Capability *cap, StgPtr ptr, W_ id)
+{
+    traceCap_stderr(cap, "message blackhole %p id %d", ptr, id);
+}
+#endif
+
+void traceMsgBlackHole_(Capability *cap, StgPtr ptr, W_ id)
+{
+#ifdef DEBUG
+    if (RtsFlags.TraceFlags.tracing == TRACE_STDERR) {
+        traceMsgBlackHole_stderr(cap, ptr, id);
+    } else
+#endif
+    {
+        if (eventlog_enabled) {
+            postMsgBlackHoleEvent(cap, ptr, id);
+        }
+    }
+
+    if (replay_enabled) {
+        replayEvent(cap, createMsgBlackHoleEvent(ptr, id));
+    }
+#ifdef DEBUG
+    else {
+        printEvent(cap, createMsgBlackHoleEvent(ptr, id));
     }
 #endif
 }

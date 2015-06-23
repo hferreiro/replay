@@ -179,14 +179,6 @@ regTableToCapability (StgRegTable *reg)
     return (Capability *)((void *)((unsigned char*)reg - STG_FIELD_OFFSET(Capability,r)));
 }
 
-#if defined(REPLAY) && defined(THREADED_RTS)
-INLINE_HEADER StgWord32
-newSparkId(Capability *cap)
-{
-    return ++cap->replay.spark_id;
-}
-#endif
-
 // Initialise the available capabilities.
 //
 void initCapabilities (void);
@@ -227,6 +219,33 @@ INLINE_HEADER void releaseCapability_ (Capability* from STG_UNUSED,
 // Array of all the capabilities
 //
 extern Capability **capabilities;
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+#define THUNK_ID_BITS 28
+#define THUNK_ID_MASK (((StgWord64)1 << THUNK_ID_BITS) - 1)
+
+EXTERN_INLINE W_ newThunkId(Capability *cap); // Used in PrimOps.cmm
+
+EXTERN_INLINE W_
+newThunkId(Capability *cap)
+{
+#ifdef DEBUG
+    if (cap->replay.spark_id == THUNK_ID_MASK) {
+        barf("replay: cannot replay more than %d sparks per capability\n",
+             THUNK_ID_MASK-1);
+    }
+#endif
+    return cap->replay.spark_id++;
+}
+
+INLINE_HEADER Capability *
+capThunkId(W_ id)
+{
+    nat capno = id >> THUNK_ID_BITS;
+    ASSERT(capno < RtsFlags.ParFlags.nNodes);
+    return capabilities[capno];
+}
+#endif
 
 // The Capability that was last free.  Used as a good guess for where
 // to assign new threads.

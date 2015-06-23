@@ -35,12 +35,16 @@ void initEventLoggingReplay(void);
 void endEventLoggingReplay(void);
 void moreCapEventBufsReplay(nat from, nat to);
 
+CapEvent *peekEvent(nat n);
 CapEvent *peekEventCap(nat n, int capno);
 CapEvent *searchEventCap(int capno, nat tag);
 CapEvent *searchEventTagValueBefore(nat tag, W_ value, nat last);
 CapEvent *searchEventTagValueBeforeCap(nat tag, W_ value, nat last, int capno);
 CapEvent *searchEventCapTagValueBefore(int capno, nat tag, W_ value, nat last);
-rtsBool existsBlackHoleEventBeforeGC(W_ value);
+#ifdef THREADED_RTS
+CapEvent *searchThunkUpdated(W_ id, StgClosure *bh);
+//rtsBool isThunkUpdated(int capno, W_ id, StgClosure *bh, rtsBool isApStack);
+#endif
 CapEvent *readEvent(void);
 CapEvent *nextEvent(void);
 void freeEvent(CapEvent *ce);
@@ -171,6 +175,12 @@ void postCapValueEvent(Capability *cap,
 void postTaskAcquireCapEvent(Capability *cap, EventTaskId taskId);
 void postTaskReleaseCapEvent(Capability *cap, EventTaskId taskId);
 void postTaskReturnCapEvent(EventTaskId taskId, EventCapNo capno);
+
+void postEnterThunkEvent(Capability *cap, W_ id, StgPtr ptr);
+
+void postPtrMoveEvent(Capability *cap, StgPtr ptr, StgPtr new_ptr);
+
+void postMsgBlackHoleEvent(Capability *cap, StgPtr ptr, W_ id);
 
 #else /* !TRACING */
 

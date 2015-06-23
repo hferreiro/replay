@@ -157,6 +157,9 @@ INFO_TABLE(stg_AP,/*special layout*/0,0,AP,"AP","AP")
 {
   W_ Words;
   W_ ap;
+#if defined(REPLAY) && defined(THREADED_RTS)
+  W_ bh, ind;
+#endif
     
   ap = R1;
   
@@ -169,6 +172,24 @@ INFO_TABLE(stg_AP,/*special layout*/0,0,AP,"AP","AP")
    * than continuing to evaluate the now-defunct closure.
    */
   STK_CHK_ENTER(WDS(Words) + SIZEOF_StgUpdateFrame, R1);
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+  ind = StgInd_indirectee(ap);
+  if ((CInt[TRACE_spark_full] == 1 :: CInt &&
+       REPLAY_ID(ind) >> 28 != Capability_no(MyCapability())) ||
+       CInt[replay_enabled] == 1 :: CInt) {
+#ifdef DEBUG
+    ccall debugReplay("cap %d: tso %d: stg_AP %p -> %p\n",
+                      Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                      ap, StgInd_indirectee(ap));
+#endif
+    (bh) = ccall replayEnter(MyCapability(), ap);
+    if (bh != 0) {
+      ASSERT(%INFO_PTR(ap) == stg_BLACKHOLE_info);
+      jump ENTRY_LBL(stg_BLACKHOLE) (ap);
+    }
+  }
+#endif
 
   PUSH_UPD_FRAME(Sp - SIZEOF_StgUpdateFrame, R1);
   Sp = Sp - SIZEOF_StgUpdateFrame - WDS(Words);
@@ -304,6 +325,9 @@ INFO_TABLE(stg_AP_STACK,/*special layout*/0,0,AP_STACK,"AP_STACK","AP_STACK")
 {
   W_ Words;
   W_ ap;
+#if defined(REPLAY) && defined(THREADED_RTS)
+  W_ bh, ind;
+#endif
 
   ap = R1;
   
@@ -318,6 +342,24 @@ INFO_TABLE(stg_AP_STACK,/*special layout*/0,0,AP_STACK,"AP_STACK","AP_STACK")
   STK_CHK_ENTER(WDS(Words) + SIZEOF_StgUpdateFrame + WDS(AP_STACK_SPLIM), R1);
   /* ensure there is at least AP_STACK_SPLIM words of headroom available
    * after unpacking the AP_STACK. See bug #1466 */
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+  ind = StgInd_indirectee(ap);
+  if ((CInt[TRACE_spark_full] == 1 :: CInt &&
+       REPLAY_ID(ind) >> 28 != Capability_no(MyCapability())) ||
+       CInt[replay_enabled] == 1 :: CInt) {
+#ifdef DEBUG
+    ccall debugReplay("cap %d: tso %d: stg_AP_STACK %p -> %p\n",
+                      Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                      ap, StgInd_indirectee(ap));
+#endif
+    (bh) = ccall replayEnter(MyCapability(), ap);
+    if (bh != 0) {
+      ASSERT(%INFO_PTR(ap) == stg_BLACKHOLE_info);
+      jump ENTRY_LBL(stg_BLACKHOLE) (ap);
+    }
+  }
+#endif
 
   PUSH_UPD_FRAME(Sp - SIZEOF_StgUpdateFrame, R1);
   Sp = Sp - SIZEOF_StgUpdateFrame - WDS(Words);

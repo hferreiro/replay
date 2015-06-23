@@ -2350,6 +2350,14 @@ primop  TraceMarkerOp "traceMarker#" GenPrimOp
    has_side_effects = True
    out_of_line      = True
 
+primop TraceExpressionOp "traceExpression#" GenPrimOp
+   Word# -> a -> a
+   { The replayer keeps track of the expression and emits begin and end
+     markers when it is evaluated. }
+   with
+   has_side_effects = True
+   out_of_line      = True
+
 ------------------------------------------------------------------------
 section "Safe coercions"
 ------------------------------------------------------------------------

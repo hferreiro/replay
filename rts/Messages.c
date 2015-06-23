@@ -14,6 +14,7 @@
 #include "Threads.h"
 #include "RaiseAsync.h"
 #include "sm/Storage.h"
+#include "eventlog/EventLog.h"
 
 /* ----------------------------------------------------------------------------
    Send a message to another Capability
@@ -65,14 +66,14 @@ void sendMessage(Capability *from_cap, Capability *to_cap, Message *msg)
 
 #ifdef REPLAY
     // TODO: message ordering
-    traceCapValue(from_cap, SEND_MESSAGE, 0);
+    traceCapValue(from_cap, SEND_MESSAGE, to_cap->no);
 #endif
 
     RELEASE_LOCK(&to_cap->lock);
 
 #ifdef REPLAY
     if (replay_enabled) {
-        replayCapTag(from_cap, SEND_MESSAGE);
+        replayCapValue(from_cap, SEND_MESSAGE, to_cap->no);
     }
 #endif
 }
@@ -185,14 +186,15 @@ loop:
 
 nat messageBlackHole(Capability *cap, MessageBlackHole *msg)
 {
-    const StgInfoTable *info;
+    const StgInfoTable *info = NULL;
     StgClosure *p;
     StgBlockingQueue *bq;
     StgClosure *bh = UNTAG_CLOSURE(msg->bh);
     StgTSO *owner;
+    StgClosure *ind;
 
-    debugReplay("cap %d: task %d: messageBlackHole: thread %d blocking on blackhole %p\n",
-                cap->no, cap->running_task->no, msg->tso->id, msg->bh);
+    debugReplay("cap %d: messageBlackHole: thread %d blocking on blackhole %p -> %p\n",
+                cap->no, msg->tso->id, msg->bh, ((StgInd *)msg->bh)->indirectee);
 
     debugTraceCap(DEBUG_sched, cap, "message: thread %d blocking on blackhole %p", 
                   (W_)msg->tso->id, msg->bh);
@@ -219,11 +221,24 @@ nat messageBlackHole(Capability *cap, MessageBlackHole *msg)
 loop:
     // NB. VOLATILE_LOAD(), because otherwise gcc hoists the load
     // and turns this into an infinite loop.
+    ind = (StgClosure*)VOLATILE_LOAD(&((StgInd*)bh)->indirectee);
 #if defined(REPLAY) && defined(THREADED_RTS)
-    p = BH_IND(UNTAG_CLOSURE((StgClosure*)VOLATILE_LOAD(&((StgInd*)bh)->indirectee)));
-#else
-    p = UNTAG_CLOSURE((StgClosure*)VOLATILE_LOAD(&((StgInd*)bh)->indirectee));
+    if (REPLAY_ATOM(ind) != 0) {
+        ASSERT(REPLAY_IS_BH(ind));
+        if (REPLAY_ATOM(ind) == REPLAY_PTR_ATOM) {
+            p = UNTAG_CLOSURE(REPLAY_PTR(ind));
+        // REPLAY_TSO_ATOM || REPLAY_SHARED_TSO
+        } else {
+            if (!REPLAY_IS_TSO(ind)) {
+                barf("messageBlackHole: not TSO");
+            }
+            p = (StgClosure *)findThread(REPLAY_TSO(ind));
+        }
+    } else
 #endif
+    {
+        p = UNTAG_CLOSURE(ind);
+    }
     info = p->header.info;
 
     if (info == &stg_IND_info)
@@ -237,6 +252,11 @@ loop:
 
     else if (info == &stg_TSO_info)
     {
+#if defined(REPLAY) && defined(THREADED_RTS)
+        if (TRACE_spark_full && REPLAY_ATOM(ind) != 0) {
+            replayTraceCapValue(cap, BLOCKED_ON_TSO, REPLAY_ID(ind));
+        }
+#endif
         owner = (StgTSO*)p;
 
 #ifdef THREADED_RTS
@@ -288,6 +308,13 @@ loop:
         // point to the BLOCKING_QUEUE from the BLACKHOLE
         write_barrier(); // make the BQ visible
         ((StgInd*)bh)->indirectee = (StgClosure *)bq;
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+        if (replay_enabled) {
+            replayUpdateWithIndirection(cap, bh, ind);
+        }
+#endif
+
         recordClosureMutated(cap,bh); // bh was mutated
 
         debugTraceCap(DEBUG_sched, cap, "thread %d blocked on thread %d", 
@@ -298,7 +325,9 @@ loop:
     else if (info == &stg_BLOCKING_QUEUE_CLEAN_info || 
              info == &stg_BLOCKING_QUEUE_DIRTY_info)
     {
-        StgBlockingQueue *bq = (StgBlockingQueue *)p;
+        StgBlockingQueue *bq;
+
+        bq = (StgBlockingQueue *)p;
 
         ASSERT(bq->bh == bh);
 
@@ -307,6 +336,15 @@ loop:
         ASSERT(owner != END_TSO_QUEUE);
 
 #ifdef THREADED_RTS
+#ifdef REPLAY
+        // XXX: should emit the event unconditionally, to know if really
+        // blocked
+        // XXX: same event BLOCKED is enough
+        if (TRACE_spark_full && REPLAY_ATOM(ind) != 0) {
+            replayTraceCapValue(cap, BLOCKED_ON_BQ, (W_)bq->bh);
+        }
+#endif
+
         if (owner->cap != cap) {
             debugReplay("cap %d: task %d: next blocked on blackhole %p\n",
                         cap->no, cap->running_task->no, bh);
@@ -349,7 +387,7 @@ loop:
 StgTSO * blackHoleOwner (StgClosure *bh)
 {
     const StgInfoTable *info;
-    StgClosure *p;
+    StgClosure *p, *ind;
 
     info = bh->header.info;
 
@@ -365,11 +403,24 @@ StgTSO * blackHoleOwner (StgClosure *bh)
 loop:
     // NB. VOLATILE_LOAD(), because otherwise gcc hoists the load
     // and turns this into an infinite loop.
+    ind = (StgClosure*)VOLATILE_LOAD(&((StgInd*)bh)->indirectee);
 #if defined(REPLAY) && defined(THREADED_RTS)
-    p = BH_IND(UNTAG_CLOSURE((StgClosure*)VOLATILE_LOAD(&((StgInd*)bh)->indirectee)));
-#else
-    p = UNTAG_CLOSURE((StgClosure*)VOLATILE_LOAD(&((StgInd*)bh)->indirectee));
+    if (REPLAY_ATOM(ind) != 0) {
+        ASSERT(REPLAY_IS_BH(ind));
+        if (REPLAY_ATOM(ind) == REPLAY_PTR_ATOM) {
+            p = UNTAG_CLOSURE(REPLAY_PTR(ind));
+        // REPLAY_TSO_ATOM || REPLAY_SHARED_TSO
+        } else {
+            if (!REPLAY_IS_TSO(ind)) {
+                barf("blackHoleOwner: not TSO");
+            }
+            p = (StgClosure *)findThread(REPLAY_TSO(ind));
+        }
+    } else
 #endif
+    {
+        p = UNTAG_CLOSURE(ind);
+    }
     info = p->header.info;
 
     if (info == &stg_IND_info) goto loop;

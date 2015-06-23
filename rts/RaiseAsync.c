@@ -819,6 +819,11 @@ raiseAsync(Capability *cap, StgTSO *tso, StgClosure *exception,
 	    words = frame - sp - 1;
 	    ap = (StgAP_STACK *)allocate(cap,AP_STACK_sizeW(words));
 	    
+#if defined(REPLAY) && defined(THREADED_RTS)
+            if (TRACE_spark_full) {
+                ((StgInd *)ap)->indirectee = REPLAY_SET_ID(newThunkId(cap), tso);
+            }
+#endif
 	    ap->size = words;
 	    ap->fun  = (StgClosure *)sp[0];
 	    sp++;
@@ -848,8 +853,22 @@ raiseAsync(Capability *cap, StgTSO *tso, StgClosure *exception,
                 // Perform the update
                 // TODO: this may waste some work, if the thunk has
                 // already been updated by another thread.
-                updateThunk(cap, tso, 
-                            ((StgUpdateFrame *)frame)->updatee, (StgClosure *)ap);
+                StgClosure *thunk USED_IF_REPLAY USED_IF_THREADS;
+                thunk = updateThunk(cap, tso, 
+                                    ((StgUpdateFrame *)frame)->updatee,
+                                    (StgClosure *)ap);
+#if defined(REPLAY) && defined(THREADED_RTS)
+                if (thunk != NULL) {
+                    debugReplay("raiseAsync: suspended %p, pointing %p to %p\n",
+                                updatee, ((StgUpdateFrame *)frame)->updatee, thunk);
+                    sp += sizeofW(StgUpdateFrame) - 2;
+                    sp[1] = (StgWord)thunk;
+                    ASSERT(thunk->header.info != &stg_TSO_info);
+                    sp[0] = (W_)&stg_enter_info;
+                    frame = sp + 2;
+                    continue;
+                }
+#endif
             }
 
 	    sp += sizeofW(StgUpdateFrame) - 1;
@@ -918,6 +937,9 @@ raiseAsync(Capability *cap, StgTSO *tso, StgClosure *exception,
 	    TICK_ALLOC_SE_THK(WDS(1),0);
 	    SET_HDR(raise,&stg_raise_info,cf->header.prof.ccs);
 	    raise->payload[0] = exception;
+#ifdef REPLAY
+            barf("raiseAsync: raise_info");
+#endif
 	    
 	    // throw away the stack from Sp up to the CATCH_FRAME.
 	    //

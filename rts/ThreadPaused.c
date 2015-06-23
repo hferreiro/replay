@@ -18,6 +18,8 @@
 #include "Replay.h"
 #include "RtsUtils.h"
 
+#include "Printer.h"
+
 #include <string.h> // for memmove()
 
 /* -----------------------------------------------------------------------------
@@ -210,6 +212,13 @@ threadPaused(Capability *cap, StgTSO *tso)
     rtsBool prev_was_update_frame = rtsFalse;
 #if defined(REPLAY) && defined(THREADED_RTS)
     rtsBool suspend = rtsFalse;
+    StgClosure *ind = NULL;
+
+    // XXX: if suspended, save allocation
+    if (TRACE_spark_full && *tso->stackobj->sp != (W_)&stg_noDuplicate_info) {
+        // noDuplicate# calls threadPaused() without pausing the thread
+        replaySaveAlloc(cap);
+    }
 #endif
 
     // Check to see whether we have threads waiting to raise
@@ -249,8 +258,11 @@ threadPaused(Capability *cap, StgTSO *tso)
 
             bh = ((StgUpdateFrame *)frame)->updatee;
 #if defined(REPLAY) && defined(THREADED_RTS)
-            if (replay_enabled) {
-                suspend = replayThreadPaused(cap, tso, bh);
+            if (TRACE_spark_full) {
+                if (replay_enabled) {
+                    suspend = replayThreadPaused(cap, bh);
+                }
+                ind = ((StgInd *)bh)->indirectee;
             }
 #endif
             bh_info = bh->header.info;
@@ -290,6 +302,7 @@ threadPaused(Capability *cap, StgTSO *tso)
             //
             if (((bh_info == &stg_WHITEHOLE_info ||
                  bh_info == &stg_BLACKHOLE_info)
+                 // XXX: TODO CHECK: &__stg_EAGER_BLACKHOLE_info?
                 &&
                 ((StgInd*)bh)->indirectee != (StgClosure*)tso)
 #if defined(REPLAY) && defined(THREADED_RTS)
@@ -309,8 +322,13 @@ threadPaused(Capability *cap, StgTSO *tso)
                 // emit it before any possible 'thread wakeup' event, to
                 // identify when to stop a thread from setupNextEvent()
                 if (TRACE_spark_full) {
-                    debugReplay("cap %d: task %d: suspendComputation: spark %p\n",
-                                cap->no, cap->running_task->no, bh);
+                    ASSERT(REPLAY_IND_IS_BH(bh) ||
+                           GET_INFO(((StgInd *)bh)->indirectee) ==
+                            &stg_AP_STACK_info ||
+                           get_itbl(UNTAG_CLOSURE(((StgInd *)bh)->indirectee))->type ==
+                            BLOCKING_QUEUE ||
+                           GET_INFO(((StgInd *)bh)->indirectee) ==
+                            &stg_IND_info);
                     replayTraceCapValue(cap, SUSPEND_COMPUTATION, (W_)bh);
                 }
 #endif
@@ -351,13 +369,42 @@ threadPaused(Capability *cap, StgTSO *tso)
             }
 #endif
 
-            debugReplay("cap %d: task %d: threadPaused: pointing bh %p to TSO %d\n",
-                        cap->no, cap->running_task->no, bh, tso->id);
+            debugReplay("cap %d: task %d: threadPaused: pointing bh %p -> %p to TSO %d\n",
+                        cap->no, cap->running_task->no, bh, ((StgInd *)bh)->indirectee, tso->id);
 
             // The payload of the BLACKHOLE points to the TSO
-            ((StgInd *)bh)->indirectee = (StgClosure *)tso;
-            write_barrier();
+#if defined(REPLAY) && defined(THREADED_RTS)
+            /*
+            if (TRACE_spark_full && REPLAY_ATOM(ind) != 0) {
+                ASSERT(REPLAY_IS_TSO(ind));
+                if (!REPLAY_IS_TSO(ind)) {
+                    barf("threadPaused(): not TSO");
+                }
+                if (REPLAY_TSO(ind) != tso->id) {
+                    ((StgInd *)bh)->indirectee = REPLAY_SET_TSO(REPLAY_ID(ind), REPLAY_ATOM(ind), tso);
+                    write_barrier();
+                }
+                //ASSERT(REPLAY_ATOM(ind) != REPLAY_TSO_ATOM || bh_info == &stg_CAF_BLACKHOLE_info);
+                //if (REPLAY_IS_BH(ind) && bh_info != &stg_CAF_BLACKHOLE_info) {
+                //    ASSERT(!replay_enabled);
+                //    bh_info = bh->header.info;
+                //    goto retry;
+                //} else {
+                //    ((StgInd *)bh)->indirectee = SET_REPLAY_TSO_ATOM(REPLAY_ID(ind), tso);
+                //}
+            } else */
+#endif
+            {
+                ((StgInd *)bh)->indirectee = (StgClosure *)tso;
+                write_barrier();
+            }
             SET_INFO(bh,&stg_BLACKHOLE_info);
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+            if (replay_enabled) {
+                replayUpdateWithIndirection(cap, bh, ind);
+            }
+#endif
 
             // .. and we need a write barrier, since we just mutated the closure:
             recordClosureMutated(cap,bh);

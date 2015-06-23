@@ -96,7 +96,7 @@ stg_gc_noregs
     DEBUG_ONLY(foreign "C" heapCheckFail());
     if (Hp > HpLim) {
         Hp = Hp - HpAlloc/*in bytes*/;
-        DEBUG_ONLY(foreign "C" replayCheckGCGeneric(Hp, MyCapability(), HpLim, CurrentNursery));
+        DEBUG_ONLY(foreign "C" replayCheckGCGeneric(Hp, MyCapability(), HpLim, CurrentNursery, Sp, SpLim));
         if (Hp + HpAlloc >= bdescr_start(CurrentNursery) + BLOCK_SIZE
             && HpAlloc <= BLOCK_SIZE
             && bdescr_link(CurrentNursery) != NULL) {
@@ -130,6 +130,7 @@ stg_gc_noregs
             goto sched;
         }
     } else {
+        DEBUG_ONLY(foreign "C" replayCheckGCGeneric(Hp, MyCapability(), HpLim, CurrentNursery, Sp, SpLim));
 #ifdef REPLAY
         if (Hp == yield_hp) {
             ret = ThreadYielding;

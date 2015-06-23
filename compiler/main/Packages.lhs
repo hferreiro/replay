@@ -896,8 +896,14 @@ packageHsLibs dflags p = map (mkDynName . addSuffix) (hsLibraries p)
               | otherwise
               = ways1
 
-        tag     = mkBuildTag (filter (not . wayRTSOnly) ways2)
-        rts_tag = mkBuildTag ways2
+        -- replay RTS includes support for -eventlog
+        ways3 | any (`elem` ways2) [WayReplay, WayReplayLazy]
+              = filter (/= WayEventLog) ways2
+              | otherwise
+              = ways2
+
+        tag     = mkBuildTag (filter (not . wayRTSOnly) ways3)
+        rts_tag = mkBuildTag ways3
 
         mkDynName x
          | gopt Opt_Static dflags       = x

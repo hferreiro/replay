@@ -69,6 +69,12 @@
   {                                                                     \
       P_ selectee, field, dest;                                         \
       TICK_ENT_DYN_THK();                                               \
+      DEBUG_ONLY(                                                       \
+      ccall debugReplay("cap %d: tso %d: stg_sel_%d_upd %p -> %p\n",    \
+                        Capability_no(MyCapability()),                  \
+                        StgTSO_id(CurrentTSO), ##offset##, node,        \
+                        StgInd_indirectee(node));                       \
+      )                                                                 \
       STK_CHK_NP(node);                                                 \
       UPD_BH_UPDATABLE(node);                                           \
       LDV_ENTER(node);                                                  \
@@ -170,6 +176,11 @@ INFO_TABLE(stg_ap_1_upd,1,0,THUNK_1_0,"stg_ap_1_upd_info","stg_ap_1_upd_info")
     (P_ node)
 {
     TICK_ENT_DYN_THK();
+#ifdef DEBUG
+    ccall debugReplay("cap %d: tso %d: stg_ap_1_upd %p -> %p\n",
+                      Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                      node, StgInd_indirectee(node));
+#endif
     STK_CHK_NP(node);
     UPD_BH_UPDATABLE(node);
     LDV_ENTER(node);
@@ -184,6 +195,11 @@ INFO_TABLE(stg_ap_2_upd,2,0,THUNK_2_0,"stg_ap_2_upd_info","stg_ap_2_upd_info")
     (P_ node)
 {
     TICK_ENT_DYN_THK();
+#ifdef DEBUG
+    ccall debugReplay("cap %d: tso %d: stg_ap_2_upd %p -> %p\n",
+                      Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                      node, StgInd_indirectee(node));
+#endif
     STK_CHK_NP(node);
     UPD_BH_UPDATABLE(node);
     LDV_ENTER(node);
@@ -199,6 +215,11 @@ INFO_TABLE(stg_ap_3_upd,3,0,THUNK,"stg_ap_3_upd_info","stg_ap_3_upd_info")
     (P_ node)
 {
     TICK_ENT_DYN_THK();
+#ifdef DEBUG
+    ccall debugReplay("cap %d: tso %d: stg_ap_3_upd %p -> %p\n",
+                      Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                      node, StgInd_indirectee(node));
+#endif
     STK_CHK_NP(node);
     UPD_BH_UPDATABLE(node);
     LDV_ENTER(node);
@@ -215,6 +236,11 @@ INFO_TABLE(stg_ap_4_upd,4,0,THUNK,"stg_ap_4_upd_info","stg_ap_4_upd_info")
     (P_ node)
 {
     TICK_ENT_DYN_THK();
+#ifdef DEBUG
+    ccall debugReplay("cap %d: tso %d: stg_ap_4_upd %p -> %p\n",
+                      Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                      node, StgInd_indirectee(node));
+#endif
     STK_CHK_NP(node);
     UPD_BH_UPDATABLE(node);
     LDV_ENTER(node);
@@ -232,6 +258,11 @@ INFO_TABLE(stg_ap_5_upd,5,0,THUNK,"stg_ap_5_upd_info","stg_ap_5_upd_info")
     (P_ node)
 {
     TICK_ENT_DYN_THK();
+#ifdef DEBUG
+    ccall debugReplay("cap %d: tso %d: stg_ap_5_upd %p -> %p\n",
+                      Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                      node, StgInd_indirectee(node));
+#endif
     STK_CHK_NP(node);
     UPD_BH_UPDATABLE(node);
     LDV_ENTER(node);
@@ -250,6 +281,11 @@ INFO_TABLE(stg_ap_6_upd,6,0,THUNK,"stg_ap_6_upd_info","stg_ap_6_upd_info")
     (P_ node)
 {
     TICK_ENT_DYN_THK();
+#ifdef DEBUG
+    ccall debugReplay("cap %d: tso %d: stg_ap_6_upd %p -> %p\n",
+                      Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                      node, StgInd_indirectee(node));
+#endif
     STK_CHK_NP(node);
     UPD_BH_UPDATABLE(node);
     LDV_ENTER(node);
@@ -269,6 +305,11 @@ INFO_TABLE(stg_ap_7_upd,7,0,THUNK,"stg_ap_7_upd_info","stg_ap_7_upd_info")
     (P_ node)
 {
     TICK_ENT_DYN_THK();
+#ifdef DEBUG
+    ccall debugReplay("cap %d: tso %d: stg_ap_7_upd %p -> %p\n",
+                      Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                      node, StgInd_indirectee(node));
+#endif
     STK_CHK_NP(node);
     UPD_BH_UPDATABLE(node);
     LDV_ENTER(node);

@@ -88,6 +88,7 @@ findSpark (Capability *cap)
   StgClosurePtr spark;
   rtsBool retry;
   nat i = 0;
+  StgClosure *indirectee USED_IF_REPLAY;
 
   debugReplay("cap %d: task %d: findSpark\n", cap->no, cap->running_task->no);
 
@@ -114,10 +115,14 @@ findSpark (Capability *cap)
       // However, measurements show that this makes at least one benchmark
       // slower (prsa) and doesn't affect the others.
       spark = tryStealSpark(cap->sparks);
+#ifdef REPLAY
+retry_our:
+#endif
       while (spark != NULL && fizzledSpark(spark)) {
           cap->spark_stats.fizzled++;
 #ifdef REPLAY
           if (TRACE_spark_full) {
+              //replayStealSpark(cap, spark);
               replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
           }
 #else
@@ -126,16 +131,22 @@ findSpark (Capability *cap)
           spark = tryStealSpark(cap->sparks);
       }
       if (spark != NULL) {
-          cap->spark_stats.converted++;
-
           // Post event for running a spark from capability's own pool.
 #ifdef REPLAY
           if (TRACE_spark_full) {
-              replayTraceCapValue(cap, SPARK_RUN, (W_)spark);
+              indirectee = ((StgInd *)spark)->indirectee;
+              if (REPLAY_ATOM(indirectee) != REPLAY_SPARK_ATOM) {
+                  goto retry_our;
+              }
+              debugReplay("cap %d: task %d: run spark %d (%p)\n",
+                          cap->no, cap->running_task->no, REPLAY_ID(indirectee), spark);
+              replayStealSpark(cap, spark);
+              replayTraceCapValue(cap, SPARK_RUN, REPLAY_ID(indirectee));
           }
 #else
           traceEventSparkRun(cap);
 #endif
+          cap->spark_stats.converted++;
 
           return spark;
       }
@@ -160,10 +171,14 @@ findSpark (Capability *cap)
               continue;
 
           spark = tryStealSpark(robbed->sparks);
+#ifdef REPLAY
+retry_other:
+#endif
           while (spark != NULL && fizzledSpark(spark)) {
               cap->spark_stats.fizzled++;
 #ifdef REPLAY
               if (TRACE_spark_full) {
+                  //replayStealSpark(cap, spark);
                   replayTraceCapValue(cap, SPARK_FIZZLE, (W_)spark);
               }
 #else
@@ -178,15 +193,21 @@ findSpark (Capability *cap)
           }
 
           if (spark != NULL) {
-              cap->spark_stats.converted++;
 #ifdef REPLAY
               if (TRACE_spark_full) {
-                  replayTraceCapValue(cap, SPARK_STEAL, (W_)spark);
+                  indirectee = ((StgInd *)spark)->indirectee;
+                  if (REPLAY_ATOM(indirectee) != REPLAY_SPARK_ATOM) {
+                      goto retry_other;
+                  }
+                  debugReplay("cap %d: task %d: spark %d (%p) stolen from cap %d\n",
+                              cap->no, cap->running_task->no, REPLAY_ID(indirectee), spark, robbed->no);
+                  replayStealSpark(cap, spark);
+                  replayTraceCapValue(cap, SPARK_STEAL, REPLAY_ID(indirectee));
               }
 #else
               traceEventSparkSteal(cap, robbed->no);
 #endif
-
+              cap->spark_stats.converted++;
               return spark;
           }
           // otherwise: no success, try next one
@@ -258,13 +279,17 @@ popReturningTask (Capability *cap)
  * The Capability is initially marked not free.
  * ------------------------------------------------------------------------- */
 
-static StgWord32
-initSparkId(nat capno)
+#if defined(REPLAY) && defined(THREADED_RTS)
+static W_
+initThunkId(Capability *cap)
 {
-    StgWord32 id = capno * 10000000; // at least 8 bits for capno
-    ASSERT(id / 10000000 == (StgWord32)capno);
+    W_ id = (cap->no << THUNK_ID_BITS) + 1;
+    ASSERT(capThunkId(id) == cap);
     return id;
 }
+#else
+#define initThunkId(_) 0
+#endif
 
 static void
 initCapability( Capability *cap, nat i )
@@ -289,15 +314,16 @@ initCapability( Capability *cap, nat i )
     cap->replay.blocks     = 0;
     cap->replay.sync_task  = NULL;
     cap->replay.sync_thunk = NULL;
-    cap->replay.spark_id   = initSparkId(cap->no);
-    cap->replay.first_spark_idx = 0;
+    cap->replay.restored_bh = NULL;
+    cap->replay.restored_ind = NULL;
+    cap->replay.spark_id   = initThunkId(cap);
 #if defined(REPLAY) && defined(THREADED_RTS)
-    cap->replay.lost_sparks = stgMallocBytes(sizeof(StgClosure *), "initCapability");
+    cap->replay.saved_sparks = stgMallocBytes(sizeof(StgClosure *), "initCapability");
 #else
-    cap->replay.lost_sparks = NULL;
+    cap->replay.saved_sparks = NULL;
 #endif
-    cap->replay.lost_sparks_idx = 0;
-    cap->replay.lost_sparks_size = 1;
+    cap->replay.saved_sparks_idx = 0;
+    cap->replay.saved_sparks_size = 1;
 
 #if defined(THREADED_RTS)
     initMutex(&cap->lock);
@@ -678,8 +704,6 @@ releaseCapabilityAndQueueWorker (Capability* cap USED_IF_THREADS)
         }
         else
         {
-            nat taskid USED_IF_REPLAY;
-
             debugTrace(DEBUG_sched, "%d spare workers already, exiting",
                        cap->n_spare_workers);
             releaseCapability_(cap,cap,rtsFalse);
@@ -960,10 +984,7 @@ prodCapability (Capability *cap, Task *task)
     debugReplay("cap %d: task %d: prodCapability %d\n", task->cap->no, task->no, cap->no);
 
 #ifdef REPLAY
-    if (replay_enabled) {
-        replayProdCapability(cap, task);
-        return;
-    }
+    ASSERT(!replay_enabled);
 #endif
 
     ACQUIRE_LOCK(&cap->lock);
@@ -1172,7 +1193,7 @@ freeCapability (Capability *cap)
     stgFree(cap->saved_mut_lists);
 #if defined(THREADED_RTS)
 #ifdef REPLAY
-    stgFree(cap->replay.lost_sparks);
+    stgFree(cap->replay.saved_sparks);
 #endif
     freeSparkPool(cap->sparks);
 #endif

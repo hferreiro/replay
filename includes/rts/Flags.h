@@ -137,6 +137,7 @@ struct TRACE_FLAGS {
 
 struct REPLAY_FLAGS {
     rtsBool replay;
+    rtsBool dup;
 };
 
 struct CONCURRENT_FLAGS {

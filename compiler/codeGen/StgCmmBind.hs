@@ -48,6 +48,7 @@ import Outputable
 import FastString
 import Maybes
 import DynFlags
+import ForeignCall
 
 import Control.Monad
 
@@ -366,6 +367,25 @@ mkRhsClosure dflags bndr cc _ fvs upd_flag args body
         ; hp_plus_n <- allocDynClosure (Just bndr) info_tbl lf_info use_cc blame_cc
                                          (map toVarArg fv_details)
 
+        ; when (gopt Opt_ReplayOn dflags && null args && lfUpdatable lf_info) $ do {
+            ; let spark_id_p = cmmOffset dflags myCapability (oFFSET_Capability_spark_id dflags)
+                  myCapability = cmmOffset dflags (CmmReg baseReg) (negate $ oFFSET_Capability_r dflags)
+
+                  shifted_tsoid = cmmShlWord dflags (cmmToWord dflags tsoid) (mkIntExpr dflags 32)
+                  tsoid = CmmLoad (cmmOffset dflags (CmmReg (CmmGlobal CurrentTSO))
+                                     (oFFSET_StgTSO_id dflags + fixedHdrSize dflags * wORD_SIZE dflags))
+                                  b32
+
+                  id_atom = cmmShlWord dflags (mkIntExpr dflags 0x1111) (mkIntExpr dflags 48)
+
+                  ind = cmmOrWord dflags (CmmLoad spark_id_p (bWord dflags))
+                             (cmmOrWord dflags shifted_tsoid id_atom)
+            -- thunk->indirectee = spark_id | 0x1111 << 48 | tso_id << 32
+            ; emitStore (cmmOffsetW dflags hp_plus_n (fixedHdrSize dflags)) ind
+            -- cap->replay->spark_id++
+            ; emit (addToMem (bWord dflags) spark_id_p 1)
+            }
+
         -- RETURN
         ; return (mkRhsInit dflags reg lf_info hp_plus_n) }
 
@@ -404,6 +424,25 @@ cgRhsStdThunk bndr lf_info payload
   ; let info_tbl = mkCmmInfo closure_info
   ; hp_plus_n <- allocDynClosure (Just bndr) info_tbl lf_info
                                    use_cc blame_cc payload_w_offsets
+
+  ; when (gopt Opt_ReplayOn dflags && lfUpdatable lf_info) $ do {
+      ; let spark_id_p = cmmOffset dflags myCapability (oFFSET_Capability_spark_id dflags)
+            myCapability = cmmOffset dflags (CmmReg baseReg) (negate $ oFFSET_Capability_r dflags)
+
+            shifted_tsoid = cmmShlWord dflags (cmmToWord dflags tsoid) (mkIntExpr dflags 32)
+            tsoid = CmmLoad (cmmOffset dflags (CmmReg (CmmGlobal CurrentTSO))
+                               (oFFSET_StgTSO_id dflags  + fixedHdrSize dflags * wORD_SIZE dflags))
+                            b32
+
+            id_atom = cmmShlWord dflags (mkIntExpr dflags 0x1111) (mkIntExpr dflags 48)
+
+            ind = cmmOrWord dflags (CmmLoad spark_id_p (bWord dflags))
+                       (cmmOrWord dflags shifted_tsoid id_atom)
+      -- thunk->indirectee = spark_id | 0x1111 << 48 | tso_id << 32
+      ; emitStore (cmmOffsetW dflags hp_plus_n (fixedHdrSize dflags)) ind
+      -- cap->replay->spark_id++
+      ; emit (addToMem (bWord dflags) spark_id_p 1)
+      }
 
         -- RETURN
   ; return (mkRhsInit dflags reg lf_info hp_plus_n) }
@@ -564,12 +603,12 @@ thunkCode cl_info fv_details _cc node arity body
         ; ldvEnterClosure cl_info (CmmLocal node) -- NB: Node always points when profiling
 
         -- Heap overflow check
-        ; entryHeapCheck cl_info node' arity [] $ do
+        ; entryHeapCheckR cl_info node' arity [] $ \alloc_hp -> do
         { -- Overwrite with black hole if necessary
           -- but *after* the heap-overflow check
         ; tickyEnterThunk cl_info
         ; when (blackHoleOnEntry cl_info && node_points)
-                (blackHoleIt node)
+                (blackHoleIt (closureUpdReqd cl_info) node alloc_hp)
 
           -- Push update frame
         ; setupUpdate cl_info node $
@@ -585,18 +624,92 @@ thunkCode cl_info fv_details _cc node arity body
                ; void $ cgExpr body }}}
 
 
+entryHeapCheckR :: ClosureInfo
+                -> Maybe LocalReg -- Function (closure environment)
+                -> Int            -- Arity -- not same as len args b/c of voids
+                -> [LocalReg]     -- Non-void args (empty for thunk)
+                -> (Maybe CmmExpr -> FCode ())
+                -> FCode ()
+
+entryHeapCheckR cl_info nodeSet arity args code
+  = entryHeapCheckR' is_fastf node arity args code
+  where
+    node = case nodeSet of
+              Just r  -> CmmReg (CmmLocal r)
+              Nothing -> CmmLit (CmmLabel $ staticClosureLabel cl_info)
+
+    is_fastf = case closureFunInfo cl_info of
+                 Just (_, ArgGen _) -> False
+                 _otherwise         -> True
+
+-- | lower-level version for CmmParse
+entryHeapCheckR' :: Bool           -- is a known function pattern
+                 -> CmmExpr        -- expression for the closure pointer
+                 -> Int            -- Arity -- not same as len args b/c of voids
+                 -> [LocalReg]     -- Non-void args (empty for thunk)
+                 -> (Maybe CmmExpr -> FCode ())
+                 -> FCode ()
+entryHeapCheckR' is_fastf node arity args code
+  = do dflags <- getDynFlags
+       let is_thunk = arity == 0
+
+           args' = map (CmmReg . CmmLocal) args
+           stg_gc_fun    = CmmReg (CmmGlobal GCFun)
+           stg_gc_enter1 = CmmReg (CmmGlobal GCEnter1)
+
+           {- Thunks:          jump stg_gc_enter_1
+
+              Function (fast): call (NativeNode) stg_gc_fun(fun, args)
+
+              Function (slow): call (slow) stg_gc_fun(fun, args)
+           -}
+           gc_call upd
+               | is_thunk
+                 = mkJump dflags NativeNodeCall stg_gc_enter1 [node] upd
+
+               | is_fastf
+                 = mkJump dflags NativeNodeCall stg_gc_fun (node : args') upd
+
+               | otherwise
+                 = mkJump dflags Slow stg_gc_fun (node : args') upd
+
+       updfr_sz <- getUpdFrameOff
+
+       loop_id <- newLabelC
+       emitLabel loop_id
+       heapCheckR True True (gc_call updfr_sz <*> mkBranch loop_id) code
+
+heapCheckR :: Bool -> Bool -> CmmAGraph -> (Maybe CmmExpr -> FCode a) -> FCode a
+heapCheckR checkStack checkYield do_gc code
+  = getHeapUsage $ \ hpHw ->
+    -- Emit heap checks, but be sure to do it lazily so
+    -- that the conditionals on hpHw don't cause a black hole
+    do  { dflags <- getDynFlags
+        ; let mb_alloc_bytes
+                 | hpHw > 0  = Just (mkIntExpr dflags (hpHw * (wORD_SIZE dflags)))
+                 | otherwise = Nothing
+              stk_hwm | checkStack = Just (CmmLit CmmHighStackMark)
+                      | otherwise  = Nothing
+        ; codeOnly $ do_checks stk_hwm checkYield mb_alloc_bytes do_gc
+        ; tickyAllocHeap True hpHw
+        ; setRealHp hpHw
+        ; code mb_alloc_bytes }
+
 ------------------------------------------------------------------------
 --              Update and black-hole wrappers
 ------------------------------------------------------------------------
 
-blackHoleIt :: LocalReg -> FCode ()
+blackHoleIt :: Bool -> LocalReg -> Maybe CmmExpr -> FCode ()
 -- Only called for closures with no args
 -- Node points to the closure
-blackHoleIt node_reg
-  = emitBlackHoleCode (CmmReg (CmmLocal node_reg))
+blackHoleIt upd node_reg alloc_hp
+  = emitBlackHoleCode_ upd (CmmReg (CmmLocal node_reg)) alloc_hp
 
 emitBlackHoleCode :: CmmExpr -> FCode ()
-emitBlackHoleCode node = do
+emitBlackHoleCode node = emitBlackHoleCode_ True node Nothing
+
+emitBlackHoleCode_ :: Bool -> CmmExpr -> Maybe CmmExpr -> FCode ()
+emitBlackHoleCode_ upd node alloc_hp = do
   dflags <- getDynFlags
 
   -- Eager blackholing is normally disabled, but can be turned on with
@@ -623,11 +736,105 @@ emitBlackHoleCode node = do
              -- profiling), so currently eager blackholing doesn't
              -- work with profiling.
 
-  when eager_blackholing $ do
-    emitStore (cmmOffsetW dflags node (fixedHdrSize dflags))
-                  (CmmReg (CmmGlobal CurrentTSO))
-    emitPrimCall [] MO_WriteBarrier []
-    emitStore node (CmmReg (CmmGlobal EagerBlackholeInfo))
+       sPARK_ID_BITS = 28
+
+       -- cap_no = cap->no
+       cap_no = CmmLoad (cmmOffset dflags myCapability (oFFSET_Capability_no dflags)) b32
+
+       -- ind_cap = ((bits32)ind) >> sPARK_ID_BITS
+       ind_cap = CmmMachOp (MO_U_Shr W32) [CmmMachOp (mo_WordTo32 dflags) [ind],
+                                           mkIntExpr dflags sPARK_ID_BITS]
+       -- ind = node->indirectee
+       ind = CmmLoad (cmmOffsetW dflags node (fixedHdrSize dflags))
+                     (bWord dflags)
+
+       replayEnter = mkForeignLabel (fsLit "replayEnter") Nothing ForeignLabelInExternalPackage IsFunction
+       myCapability = cmmOffset dflags (CmmReg baseReg) (negate $ oFFSET_Capability_r dflags)
+
+       (caller_save, caller_load) = callerSaveVolatileRegs dflags
+       conv = ForeignConvention CCallConv arg_hints [AddrHint] CmmMayReturn
+       (args, arg_hints) = unzip [(myCapability, AddrHint), (node, AddrHint)]
+       fun_expr = mkLblExpr replayEnter
+       replayCall bh = mkUnsafeCall (ForeignTarget fun_expr conv) [bh] args
+
+       -- replay_atom = REPLAY_ATOM(node->ind)
+       replay_atom = cmmUShrWord dflags ind (mkIntExpr dflags 48)
+
+       -- spark_id = (W_)(bits32)ind
+       spark_id = CmmMachOp (mo_u_32ToWord dflags)
+                    [CmmMachOp (mo_WordTo32 dflags) [ind]]
+       -- shifted_tsoid = (W_)tso->id << 32
+       shifted_tsoid = cmmShlWord dflags (cmmToWord dflags tsoid) (mkIntExpr dflags 32)
+       tsoid = CmmLoad (cmmOffset dflags (CmmReg (CmmGlobal CurrentTSO))
+                          (oFFSET_StgTSO_id dflags + fixedHdrSize dflags * wORD_SIZE dflags))
+                       b32
+       -- tso_atom = 0x3333 << 48
+       tso_atom = cmmShlWord dflags (mkIntExpr dflags 0x3333) (mkIntExpr dflags 48)
+       -- new_ind = spark_id | shifted_tsoid | tso_atom
+       new_ind = cmmOrWord dflags spark_id
+                      (cmmOrWord dflags shifted_tsoid tso_atom)
+
+       Just alloc_lit = alloc_hp
+
+  if (gopt Opt_ReplayOn dflags && upd)
+    then do
+      -- bh = 0;
+      -- if (capSparkId(REPLAY_ID(node->indirectee))->no != cap->no ||
+      --     REPLAY_ATOM(node->indirectee) == REPLAY_SHARED_ATOM ||
+      --     replay_enabled)
+      --    bh = replayEnter(cap, node);
+      -- else
+      --    -- blackhole
+      --    node->indirectee = spark_id | 0x3333 << 48 | tso_id << 32
+      --    write_barrier()
+      --    node->header.info = EAGER_BLACKHOLE
+      bh <- newTemp (bWord dflags)
+      emit $ mkAssign (CmmLocal bh) (zeroExpr dflags)
+      emit =<< mkCmmIfThenElse
+        (cmmNeWord dflags
+          (cmmOrWord dflags
+            (CmmMachOp (MO_Ne W32) [ind_cap, cap_no])
+            (cmmOrWord dflags
+              (cmmEqWord dflags replay_atom (mkIntExpr dflags 0x2222))
+              (CmmMachOp (MO_Ne W32)
+                [CmmLoad (mkLblExpr (mkCmmDataLabel rtsPackageId (fsLit "replay_enabled")))
+                         (cInt dflags),
+                 CmmMachOp (MO_UU_Conv (wordWidth dflags) (cIntWidth dflags))
+                  [zeroExpr dflags]])))
+          (zeroExpr dflags))
+
+        -- emitRtsCallGen [] replayEnter [(myCapability, AddrHint), (node, AddrHint)] False
+        (caller_save <*> replayCall bh <*> caller_load)
+
+        -- blackhole
+        (if eager_blackholing
+         then mkStore (cmmOffsetW dflags node (fixedHdrSize dflags)) new_ind <*>
+              caller_save <*> mkUnsafeCall (PrimTarget MO_WriteBarrier) [] [] <*> caller_load <*>
+              mkStore node (CmmReg (CmmGlobal EagerBlackholeInfo))
+         else mkNop)
+         --else error "no eager_blackholing" {-mkNop-})
+
+
+      when eager_blackholing $ do
+        -- if (bh != 0)
+        --     restore Hp;
+        --     ENTER(node);
+        updfr  <- getUpdFrameOff
+        let target = entryCode dflags (closureInfoPtr dflags node)
+        emit =<< mkCmmIfThen
+          (cmmNeWord dflags (CmmReg (CmmLocal bh)) (zeroExpr dflags))
+          -- restore Hp
+          ((if isJust alloc_hp
+             then mkAssign hpReg (cmmOffsetExpr dflags (CmmReg hpReg) (cmmNegate dflags alloc_lit))
+             else mkNop) <*>
+          -- re-enter the thunk, now a blackhole
+           mkJump dflags NativeNodeCall target [] updfr)
+    else do
+      when eager_blackholing $ do
+        emitStore (cmmOffsetW dflags node (fixedHdrSize dflags))
+                      (CmmReg (CmmGlobal CurrentTSO))
+        emitPrimCall [] MO_WriteBarrier []
+        emitStore node (CmmReg (CmmGlobal EagerBlackholeInfo))
 
 setupUpdate :: ClosureInfo -> LocalReg -> FCode () -> FCode ()
         -- Nota Bene: this function does not change Node (even if it's a CAF),

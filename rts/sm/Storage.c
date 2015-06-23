@@ -28,6 +28,7 @@
 #include "OSMem.h"
 #include "Trace.h"
 #include "Replay.h"
+#include "eventlog/EventLog.h"
 #include "GC.h"
 #include "Evac.h"
 #if defined(ios_HOST_OS)
@@ -345,8 +346,14 @@ lockCAF (StgRegTable *reg, StgIndStatic *caf)
     Capability *cap = regTableToCapability(reg);
     StgInd *bh;
 
-    debugReplay("cap %d: task %d: lockCAF\n",
-                cap->no, cap->running_task->no);
+#if defined(REPLAY) && defined(THREADED_RTS)
+    W_ id = (W_)caf->header.info;
+    ASSERT(id < THUNK_ID_MASK);
+    id |= cap->no << THUNK_ID_BITS;
+    if (replay_enabled) {
+        replayLockCAF(cap, id);
+    }
+#endif
 
     orig_info = caf->header.info;
 
@@ -378,11 +385,35 @@ lockCAF (StgRegTable *reg, StgIndStatic *caf)
     // Allocate the blackhole indirection closure
     bh = (StgInd *)allocate(cap, sizeofW(*bh));
     SET_HDR(bh, &stg_CAF_BLACKHOLE_info, caf->header.prof.ccs);
-    bh->indirectee = (StgClosure *)cap->r.rCurrentTSO;
+#if defined(REPLAY) && defined(THREADED_RTS)
+    if (TRACE_spark_full) {
+        // use TSO instead of ID because CAF will not call replayEnter and it
+        // uses stg_bh_upd_frame
+        bh->indirectee = REPLAY_SET_TSO(id, REPLAY_TSO_ATOM, cap->r.rCurrentTSO);
+    } else
+#endif
+    {
+        bh->indirectee = (StgClosure *)cap->r.rCurrentTSO;
+    }
 
     caf->indirectee = (StgClosure *)bh;
     write_barrier();
+
     SET_INFO((StgClosure*)caf,&stg_IND_STATIC_info);
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+    if (TRACE_spark_full) {
+#ifdef DEBUG
+        // XXX: delete
+        if (replay_enabled) {
+            CapEvent *ce = readEvent();
+            ASSERT(ce->ev->header.tag == EVENT_ENTER_THUNK);
+            id = ((EventEnterThunk *)ce->ev)->id;
+        }
+#endif
+        traceEnterThunk(cap, id, (StgPtr)bh);
+    }
+#endif
 
     return bh;
 }
@@ -392,17 +423,8 @@ newCAF(StgRegTable *reg, StgIndStatic *caf)
 {
     StgInd *bh;
 
-    debugReplay("cap %d: task %d: newCAF\n",
-                regTableToCapability(reg)->no,
-                regTableToCapability(reg)->running_task->no);
-
     bh = lockCAF(reg, caf);
     if (!bh) return NULL;
-
-    debugReplay("cap %d: task %d: newCAF %p success\n",
-                regTableToCapability(reg)->no,
-                regTableToCapability(reg)->running_task->no,
-                bh);
 
     if(keepCAFs)
     {
@@ -574,16 +596,6 @@ clearNursery (Capability *cap)
         ASSERT(bd->gen_no == 0);
         ASSERT(bd->gen == g0);
         IF_DEBUG(sanity,memset(bd->start, 0xaa, BLOCK_SIZE));
-#if defined(REPLAY) && defined(DEBUG)
-        StgPtr p;
-        for (p = bd->start; p < bd->start + BLOCK_SIZE_W; p++) {
-            if (REPLAY_ATOM(*p) == SPARK_ID_ATOM) {
-                ASSERT(closure_THUNK((StgClosure *)*p));
-            } else if (REPLAY_ATOM(*p) == BH_IND_ATOM) {
-                barf("replay: didn't clear %p", (void *)*p);
-            }
-        }
-#endif
     }
 }
 

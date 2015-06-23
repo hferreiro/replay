@@ -34,8 +34,10 @@
 #define TICKY_TICKY
 #endif
 
-#if defined(TRACING)
-#define REPLAY
+/* REPLAY implies TRACING
+ */
+#if defined(REPLAY)
+#define TRACING
 #endif
 
 /* -----------------------------------------------------------------------------

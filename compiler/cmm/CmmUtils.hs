@@ -30,7 +30,7 @@ module CmmUtils(
         cmmNegate,
         cmmULtWord, cmmUGeWord, cmmUGtWord, cmmSubWord,
         cmmNeWord, cmmEqWord, cmmOrWord, cmmAndWord,
-        cmmUShrWord, cmmAddWord, cmmMulWord, cmmQuotWord,
+        cmmShlWord, cmmUShrWord, cmmAddWord, cmmMulWord, cmmQuotWord,
         cmmToWord,
 
         isTrivialCmmExpr, hasNoGlobalRegs,
@@ -309,7 +309,7 @@ cmmLoadIndexW dflags base off ty = CmmLoad (cmmOffsetW dflags base off) ty
 -----------------------
 cmmULtWord, cmmUGeWord, cmmUGtWord, cmmSubWord,
   cmmNeWord, cmmEqWord, cmmOrWord, cmmAndWord,
-  cmmUShrWord, cmmAddWord, cmmMulWord, cmmQuotWord
+  cmmShlWord, cmmUShrWord, cmmAddWord, cmmMulWord, cmmQuotWord
   :: DynFlags -> CmmExpr -> CmmExpr -> CmmExpr
 cmmOrWord dflags  e1 e2 = CmmMachOp (mo_wordOr dflags)  [e1, e2]
 cmmAndWord dflags e1 e2 = CmmMachOp (mo_wordAnd dflags) [e1, e2]
@@ -318,7 +318,7 @@ cmmEqWord dflags  e1 e2 = CmmMachOp (mo_wordEq dflags)  [e1, e2]
 cmmULtWord dflags e1 e2 = CmmMachOp (mo_wordULt dflags) [e1, e2]
 cmmUGeWord dflags e1 e2 = CmmMachOp (mo_wordUGe dflags) [e1, e2]
 cmmUGtWord dflags e1 e2 = CmmMachOp (mo_wordUGt dflags) [e1, e2]
---cmmShlWord dflags e1 e2 = CmmMachOp (mo_wordShl dflags) [e1, e2]
+cmmShlWord dflags e1 e2 = CmmMachOp (mo_wordShl dflags) [e1, e2]
 cmmUShrWord dflags e1 e2 = CmmMachOp (mo_wordUShr dflags) [e1, e2]
 cmmAddWord dflags e1 e2 = CmmMachOp (mo_wordAdd dflags) [e1, e2]
 cmmSubWord dflags e1 e2 = CmmMachOp (mo_wordSub dflags) [e1, e2]

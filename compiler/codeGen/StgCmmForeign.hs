@@ -328,6 +328,21 @@ openNursery :: DynFlags -> CmmAGraph
 openNursery dflags = catAGraphs [
     -- Hp = CurrentNursery->free - 1;
     mkAssign hp (cmmOffsetW dflags (CmmLoad (nursery_bdescr_free dflags) (bWord dflags)) (-1)),
+ 
+    ---- HpLim = CurrentNursery->start +
+    ----              CurrentNursery->blocks*BLOCK_SIZE_W - 1;
+    --mkAssign hpLim
+    --    (cmmOffsetExpr dflags
+    --        (CmmLoad (nursery_bdescr_start dflags) (bWord dflags))
+    --        (cmmOffset dflags
+    --          (CmmMachOp (mo_wordMul dflags) [
+    --            CmmMachOp (MO_SS_Conv W32 (wordWidth dflags))
+    --              [CmmLoad (nursery_bdescr_blocks dflags) b32],
+    --            mkIntExpr dflags (bLOCK_SIZE dflags)
+    --           ])
+    --          (-1)
+    --        )
+    --    )
 
     -- if (CurrentNursery == cap->replay.bd)
     --   HpLim = cap->replay.hp;

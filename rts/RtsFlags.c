@@ -189,6 +189,7 @@ void initRtsFlagsDefaults(void)
 
 #if defined(REPLAY)
     RtsFlags.ReplayFlags.replay       = rtsFalse;
+    RtsFlags.ReplayFlags.dup          = rtsFalse;
 #endif
 
 #ifdef PROFILING
@@ -313,6 +314,7 @@ usage_text[] = {
 "",
 #ifdef REPLAY
 "  --replay   Use a <program>.replay log to replay a previous execution",
+"  --dup      Replay <program>.replay and add events for duplicated evaluation",
 #endif
 "  -l[flags]  Log events in binary format to the file <program>.eventlog",
 #  ifdef DEBUG
@@ -743,6 +745,14 @@ error = rtsTrue;
                                &rts_argv[arg][2])) {
                       REPLAY_BUILD_ONLY(
                           OPTION_UNSAFE;
+                          RtsFlags.ReplayFlags.replay = rtsTrue;
+                      );
+                  }
+                  else if (strequal("dup",
+                               &rts_argv[arg][2])) {
+                      REPLAY_BUILD_ONLY(
+                          OPTION_UNSAFE;
+                          RtsFlags.ReplayFlags.dup = rtsTrue;
                           RtsFlags.ReplayFlags.replay = rtsTrue;
                       );
                   }

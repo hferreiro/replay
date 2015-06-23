@@ -556,8 +556,33 @@ scavenge_block (bdescr *bd)
 	break;
     }
 
-    case IND_PERM:
     case BLACKHOLE:
+#if defined(REPLAY) && defined(THREADED_RTS)
+    {
+        StgClosure *ind = ((StgInd *)p)->indirectee;
+        if (REPLAY_IS_TSO(ind)) {
+            ASSERT(findThread(REPLAY_TSO(ind))->id == REPLAY_TSO(ind));
+            evacuate((StgClosure **)&thread_from_id[REPLAY_TSO(ind)-1]);
+            p += sizeofW(StgInd);
+            break;
+        }
+        //if (REPLAY_ATOM(ind) != 0) {
+        //    StgClosure *r;
+        //    ASSERT(REPLAY_IS_BH(ind));
+        //    //REPLAY_TSO_RESET(q);
+        //    if (REPLAY_IS_TSO(ind)) {
+        //        r = (StgClosure *)findThread(REPLAY_TSO(ind));
+        //    } else {
+        //        barf("scavenge_block");
+        //        r = REPLAY_PTR(ind);
+        //    }
+        //    evacuate(&r);
+        //    p += sizeofW(StgInd);
+        //    break;
+        //}
+    }
+#endif
+    case IND_PERM:
 	evacuate(&((StgInd *)p)->indirectee);
 	p += sizeofW(StgInd);
 	break;
@@ -1339,11 +1364,34 @@ scavenge_one(StgPtr p)
 	break;
       }
 
+    case BLACKHOLE:
+#if defined(REPLAY) && defined(THREADED_RTS)
+      {
+        StgClosure *ind = ((StgInd *)p)->indirectee;
+        if (REPLAY_IS_TSO(ind)) {
+            ASSERT(findThread(REPLAY_TSO(ind))->id == REPLAY_TSO(ind));
+            evacuate((StgClosure **)&thread_from_id[REPLAY_TSO(ind)-1]);
+            break;
+        }
+        //if (REPLAY_ATOM(ind) != 0) {
+        //    StgClosure *r;
+        //    ASSERT(REPLAY_IS_BH(ind));
+        //    //REPLAY_TSO_RESET(q);
+        //    if (REPLAY_IS_TSO(ind)) {
+        //        r = (StgClosure *)findThread(REPLAY_TSO(ind));
+        //    } else {
+        //        r = REPLAY_PTR(ind);
+        //        evacuate
+        //    }
+        //    evacuate(&r);
+        //    break;
+        //}
+      }
+#endif
     case IND:
         // IND can happen, for example, when the interpreter allocates
         // a gigantic AP closure (more than one block), which ends up
         // on the large-object list and then gets updated.  See #3424.
-    case BLACKHOLE:
     case IND_STATIC:
 	evacuate(&((StgInd *)p)->indirectee);
 
@@ -1471,11 +1519,10 @@ scavenge_mutable_list(bdescr *bd, generation *gen)
 		continue;
             }
 #if defined(REPLAY) && defined(THREADED_RTS)
-            case BLACKHOLE:
-                if (SPARK_ATOM(p) != 0) {
-                    ASSERT(SPARK_ATOM(p) == BH_IND_ATOM);
-                    RESET_SPARK(p);
-                }
+            //case BLACKHOLE:
+            //    if (REPLAY_IND_ATOM(p) != 0) {
+            //        REPLAY_TSO_RESET(p);
+            //    }
 #endif
             default:
 		;
@@ -1709,6 +1756,16 @@ scavenge_stack(StgPtr p, StgPtr stack_end)
         if (GET_CLOSURE_TAG(v) != 0 ||
             (get_itbl(v)->type != BLACKHOLE)) {
             // blackholing is compulsory, see above.
+#if defined(REPLAY) && defined(THREADED_RTS)
+            if (emit_dups) {
+                if (GET_CLOSURE_TAG(v) != 0) {
+                    barf("replay: shortcutted blackhole, cannot know bh id");
+                }
+                barf("replay: duplicated spark %p detected in GC\n", v);
+                traceCapValue(gct->cap, DUP_SPARK, (W_)v);
+            }
+#endif
+            barf("scavenge_stack: %p", v);
             frame->header.info = (const StgInfoTable*)&stg_enter_checkbh_info;
         }
         ASSERT(v->header.info != &stg_TSO_info);

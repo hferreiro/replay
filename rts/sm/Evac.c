@@ -376,11 +376,24 @@ evacuate(StgClosure **p)
   StgWord tag;
 
   q = *p;
+#if defined(REPLAY) && defined(THREADED_RTS)
+  if (REPLAY_IS_TSO(q)) {
+      q = (StgClosure *)findThread(REPLAY_TSO(q));
+      p = (StgClosure **)&thread_from_id[((StgTSO *)q)->id-1];
+      ASSERT(*p == q);
+  } else if (REPLAY_ATOM(q) != 0) {
+      ASSERT(REPLAY_ATOM(q) == REPLAY_PTR_ATOM);
+      q = REPLAY_PTR(q);
+  }
+#endif
 
 loop:
   /* The tag and the pointer are split, to be merged after evacing */
   tag = GET_CLOSURE_TAG(q);
   q = UNTAG_CLOSURE(q);
+#if defined(REPLAY) && defined(THREADED_RTS)
+  if (REPLAY_ATOM(q) != 0) { barf("evacuate"); }
+#endif
 
   ASSERTM(LOOKS_LIKE_CLOSURE_PTR(q), "invalid closure, info=%p", q->header.info);
 
@@ -632,30 +645,35 @@ loop:
   {
       StgClosure *r;
       const StgInfoTable *i;
-      r = ((StgInd*)q)->indirectee;
 #if defined(REPLAY) && defined(THREADED_RTS)
-      if (REPLAY_ATOM(r) != 0) {
-          ASSERT(REPLAY_ATOM(r) == BH_IND_ATOM);
-          r = BH_IND(r);
-      }
-#endif
-      if (GET_CLOSURE_TAG(r) == 0) {
-#if defined(REPLAY) && defined(THREADED_RTS)
+      StgClosure *ind = ((StgInd *)q)->indirectee;
+      if (REPLAY_ATOM(ind) != 0) {
           // fake blackhole
-          if (replay_enabled && SPARK_ATOM(q) == SPARK_ID_ATOM) {
+          if (replay_enabled && REPLAY_IS_THUNK(ind)) {
+              barf("Evac.c:replayRestoreSpark()");
               replayRestoreSpark(q);
-
-              info = q->header.info;
-              ASSERT(closure_THUNK(q));
-              copy(p,info,q,closure_sizeW(q),gen_no);
-
-              replayPromoteSpark(*p, q);
-              return;
+              goto loop;
           }
+
+          ASSERT(REPLAY_IS_BH(ind));
+          //REPLAY_TSO_RESET(q);
+          if (REPLAY_IS_TSO(ind)) {
+              r = (StgClosure *)findThread(REPLAY_TSO(ind));
+          } else {
+              r = REPLAY_PTR(ind);
+          }
+      } else
 #endif
+      {
+          r = ((StgInd*)q)->indirectee;
+      }
+      if (GET_CLOSURE_TAG(r) == 0) {
           i = r->header.info;
           if (IS_FORWARDING_PTR(i)) {
               r = (StgClosure *)UN_FORWARDING_PTR(i);
+#if defined(REPLAY) && defined(THREADED_RTS)
+              ASSERT(REPLAY_ATOM(r) == 0);
+#endif
               i = r->header.info;
           }
           if (i == &stg_TSO_info
@@ -665,7 +683,11 @@ loop:
               copy(p,info,q,sizeofW(StgInd),gen_no);
               return;
           }
+#if defined(REPLAY) && defined(THREADED_RTS)
+          ASSERTM(i != &stg_IND_info, "q = %p, ind = %p", q, r);
+#else
           ASSERT(i != &stg_IND_info);
+#endif
       }
       q = r;
       *p = r;
@@ -758,6 +780,7 @@ loop:
               move_STACK(stack, new_stack);
               for (r = stack->sp, s = new_stack->sp;
                    r < stack->stack + stack->stack_size;) {
+                  //debugReplay("%p is now %p\n", r, s);
                   *s++ = *r++;
               }
           }
@@ -850,9 +873,6 @@ eval_thunk_selector (StgClosure **q, StgSelector * p, rtsBool evac)
     StgSelector *prev_thunk_selector;
     bdescr *bd;
     StgClosure *val;
-#if defined(REPLAY) && defined(THREADED_RTS)
-    rtsBool restored = rtsFalse;
-#endif
     
     prev_thunk_selector = NULL;
     // this is a chain of THUNK_SELECTORs that we are going to update
@@ -945,6 +965,15 @@ selector_loop:
     // from-space during marking, for example.  We rely on the property
     // that evacuate() doesn't mind if it gets passed a to-space pointer.
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+    if (REPLAY_ATOM(selectee) != 0) {
+        ASSERT(REPLAY_ATOM(selectee) == REPLAY_PTR_ATOM);
+        if (REPLAY_ATOM(selectee) != REPLAY_PTR_ATOM) {
+            barf("eval_thunk_selector");
+        }
+        selectee = REPLAY_PTR(selectee);
+    }
+#endif
     info = (StgInfoTable*)selectee->header.info;
 
     if (IS_FORWARDING_PTR(info)) {
@@ -1045,27 +1074,37 @@ selector_loop:
           StgClosure *r;
           const StgInfoTable *i;
 #if defined(REPLAY) && defined(THREADED_RTS)
-          r = BH_IND(((StgInd *)selectee)->indirectee);
-#else
-          r = ((StgInd*)selectee)->indirectee;
+          StgClosure *ind = ((StgInd *)selectee)->indirectee;
+          if (REPLAY_ATOM(ind) != 0) {
+              // fake blackhole
+              if (replay_enabled && REPLAY_IS_THUNK(ind)) {
+                  barf("Evac.c:replayRestoreSpark(selectee)");
+                  replayRestoreSpark(selectee);
+                  goto selector_loop;
+              }
+
+              ASSERT(REPLAY_IS_BH(ind));
+              //REPLAY_TSO_RESET(selectee);
+              if (REPLAY_IS_TSO(ind)) {
+                  r = (StgClosure *)findThread(REPLAY_TSO(ind));
+              } else {
+                  r = REPLAY_PTR(ind);
+              }
+          } else
 #endif
+          {
+              r = ((StgInd*)selectee)->indirectee;
+          }
 
           // establish whether this BH has been updated, and is now an
           // indirection, as in evacuate().
           if (GET_CLOSURE_TAG(r) == 0) {
-#if defined(REPLAY) && defined(THREADED_RTS)
-              // fake blackhole
-              if (replay_enabled && SPARK_ATOM(q) == SPARK_ID_ATOM) {
-                  replayRestoreSpark(selectee);
-
-                  ASSERT(closure_THUNK(selectee));
-                  restored = rtsTrue;
-                  goto selector_loop;
-              }
-#endif
               i = r->header.info;
               if (IS_FORWARDING_PTR(i)) {
                   r = (StgClosure *)UN_FORWARDING_PTR(i);
+#if defined(REPLAY) && defined(THREADED_RTS)
+                  ASSERT(REPLAY_ATOM(r) == 0);
+#endif
                   i = r->header.info;
               }
               if (i == &stg_TSO_info
@@ -1077,7 +1116,7 @@ selector_loop:
               ASSERT(i != &stg_IND_info);
           }
 
-          selectee = UNTAG_CLOSURE( ((StgInd *)selectee)->indirectee );
+          selectee = UNTAG_CLOSURE(r);
           goto selector_loop;
       }
 
@@ -1133,11 +1172,6 @@ bale_out:
     *q = (StgClosure *)p;
     if (evac) {
         copy(q,(const StgInfoTable *)info_ptr,(StgClosure *)p,THUNK_SELECTOR_sizeW(),bd->dest_no);
-#if defined(REPLAY) && defined(THREADED_RTS)
-        if (restored) {
-            replayPromoteSpark(*q, (StgClosure *)p);
-        }
-#endif
     }
     unchain_thunk_selectors(prev_thunk_selector, *q);
     return;

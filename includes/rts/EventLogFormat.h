@@ -169,6 +169,9 @@
 #define EVENT_TASK_ACQUIRE_CAP    62 /* (taskID) */
 #define EVENT_TASK_RELEASE_CAP    63 /* (taskID) */
 #define EVENT_TASK_RETURN_CAP     64 /* (taskID, cap) */
+#define EVENT_ENTER_THUNK         65 /* (id, ptr) */
+#define EVENT_POINTER_MOVE        66 /* (ptr, new_ptr) */
+#define EVENT_MSG_BLACKHOLE       67 /* (ptr, new_ptr) */
 
 /* Range 59 - 59 is available for new GHC and common events. */
 
@@ -185,7 +188,7 @@
  * ranges higher than this are reserved but not currently emitted by ghc.
  * This must match the size of the EventDesc[] array in EventLog.c
  */
-#define NUM_GHC_EVENT_TAGS        65
+#define NUM_GHC_EVENT_TAGS        68
 
 #if 0  /* DEPRECATED EVENTS: */
 /* we don't actually need to record the thread, it's implicit */
@@ -263,8 +266,19 @@ typedef enum {
     SPARK_GC,
     SUSPEND_COMPUTATION,
     MSG_BLACKHOLE,
-    THUNK_WHNF,
-    THUNK_UPDATED,
+    BH_THUNK,
+    DUP_SPARK,
+    ENTER_SPARK,
+    WHNF_SPARK,
+    DELETE_THREAD,
+    PRUNE_SPARK_QUEUE,
+    BH_WHNF,
+    BLOCKED_ON_TSO,
+    BLOCKED_ON_BQ,
+    GC_END,
+    THUNK_UPDATE,
+    COLLISION_WHNF,
+    COLLISION_OTHER,
 } EventCapTag;
 
 #endif

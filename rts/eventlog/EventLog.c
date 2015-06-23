@@ -17,6 +17,7 @@
 #include "EventLog.h"
 #include "Event.h"
 #include "Hash.h"
+#include "Replay.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -74,11 +75,6 @@ static ReplayBuf  replayBuf;
 
 static CapEvent *eventList = NULL;
 static nat eventListSize = 0;
-
-// cache whether a 'blackhole event' for a particular id was seen before next
-// GC
-static HashTable *cached_blackhole_events;
-static EventTimestamp cached_last_gc;
 
 
 const char *EventDesc[] = {
@@ -139,6 +135,9 @@ const char *EventDesc[] = {
   [EVENT_TASK_ACQUIRE_CAP]    = "Task acquiring capability",
   [EVENT_TASK_RELEASE_CAP]    = "Task releasing capability",
   [EVENT_TASK_RETURN_CAP]     = "Task returning to capability",
+  [EVENT_ENTER_THUNK]         = "Enter thunk",
+  [EVENT_POINTER_MOVE]        = "Pointer move",
+  [EVENT_MSG_BLACKHOLE]       = "Message blackhole",
 };
 
 // Event type. 
@@ -584,6 +583,12 @@ initEventType(StgWord8 t)
 
     case EVENT_TASK_RETURN_CAP:
         eventTypes[t].size = sizeof(EventTaskId) + sizeof(EventCapNo);
+        break;
+
+    case EVENT_ENTER_THUNK:
+    case EVENT_POINTER_MOVE:
+    case EVENT_MSG_BLACKHOLE:
+        eventTypes[t].size = sizeof(StgWord64) * 2;
         break;
 
     default:
@@ -1466,6 +1471,51 @@ void postTaskReturnCapEvent(EventTaskId taskId, EventCapNo capno)
     RELEASE_LOCK(&eventBufMutex);
 }
 
+void postEnterThunkEvent(Capability *cap, W_ id, StgPtr ptr)
+{
+    EventsBuf *eb;
+
+    eb = &capEventBuf[cap->no];
+
+    if (!hasRoomForEvent(eb, EVENT_ENTER_THUNK)) {
+        printAndClearEventBuf(eb);
+    }
+
+    postEventHeader(eb, EVENT_ENTER_THUNK);
+    postWord64(eb, id);
+    postWord64(eb, (W_)ptr);
+}
+
+void postPtrMoveEvent(Capability *cap, StgPtr ptr, StgPtr new_ptr)
+{
+    EventsBuf *eb;
+
+    eb = &capEventBuf[cap->no];
+
+    if (!hasRoomForEvent(eb, EVENT_POINTER_MOVE)) {
+        printAndClearEventBuf(eb);
+    }
+
+    postEventHeader(eb, EVENT_POINTER_MOVE);
+    postWord64(eb, (W_)ptr);
+    postWord64(eb, (W_)new_ptr);
+}
+
+void postMsgBlackHoleEvent(Capability *cap, StgPtr ptr, W_ id)
+{
+    EventsBuf *eb;
+
+    eb = &capEventBuf[cap->no];
+
+    if (!hasRoomForEvent(eb, EVENT_MSG_BLACKHOLE)) {
+        printAndClearEventBuf(eb);
+    }
+
+    postEventHeader(eb, EVENT_MSG_BLACKHOLE);
+    postWord64(eb, (W_)ptr);
+    postWord64(eb, id);
+}
+
 void closeBlockMarker (EventsBuf *ebuf)
 {
     StgInt8* save_pos;
@@ -1681,10 +1731,6 @@ endEventLoggingReplay(void)
         stgFree(eventLogFilenameReplay);
     }
 
-    if (cached_blackhole_events != NULL) {
-        freeHashTable(cached_blackhole_events, NULL);
-    }
-
     ASSERT(eventList == NULL);
 }
 
@@ -1728,8 +1774,6 @@ static void
 resetReplayBuf(ReplayBuf *rb)
 {
     rb->eb.pos = rb->eb.marker = rb->eb.begin;
-    rb->ce = NULL;
-    rb->ceSize = 0;
 }
 
 static void
@@ -2120,6 +2164,33 @@ getEvent(ReplayBuf *rb)
         ev = (Event *)etrc;
         break;
     }
+    case EVENT_ENTER_THUNK:
+    {
+        EventEnterThunk *eet = stgCallocBytes(1, sizeof(EventEnterThunk), "getEvent");
+        getWord64(rb, &eet->id);
+        getWord64(rb, &eet->ptr);
+
+        ev = (Event *)eet;
+        break;
+    }
+    case EVENT_POINTER_MOVE:
+    {
+        EventPtrMove *epm = stgCallocBytes(1, sizeof(EventPtrMove), "getEvent");
+        getWord64(rb, &epm->ptr);
+        getWord64(rb, &epm->new_ptr);
+
+        ev = (Event *)epm;
+        break;
+    }
+    case EVENT_MSG_BLACKHOLE:
+    {
+        EventMsgBlackHole *embh = stgCallocBytes(1, sizeof(EventMsgBlackHole), "getEvent");
+        getWord64(rb, &embh->ptr);
+        getWord64(rb, &embh->id);
+
+        ev = (Event *)embh;
+        break;
+    }
     default:
         barf ("getEvent: unknown event tag %d", tag);
     }
@@ -2311,7 +2382,7 @@ eventListForward(void)
 }
 
 // Returns the global nth event
-static CapEvent *
+CapEvent *
 peekEvent(nat n)
 {
     CapEvent *ce;
@@ -2321,6 +2392,9 @@ peekEvent(nat n)
     } else {
         while (eventListSize <= n) {
             ce = eventListNext();
+            if (ce == NULL) {
+                break;
+            }
         }
     }
     return ce;
@@ -2442,45 +2516,84 @@ searchEventCapTagValueBefore(int capno, nat tag, W_ value, nat last)
     return ce;
 }
 
-rtsBool
-existsBlackHoleEventBeforeGC(W_ value)
+#ifdef THREADED_RTS
+CapEvent *
+searchThunkUpdated(W_ id, StgClosure *bh)
 {
-    nat n;
+    nat n = 0;
     CapEvent *ce;
+    StgClosure *p;
 
-    ce = readEvent();
-    if (cached_blackhole_events != NULL &&
-        ce->ev->header.time > cached_last_gc) {
-        freeHashTable(cached_blackhole_events, NULL);
-        cached_blackhole_events = NULL;
-    }
-
-    if (cached_blackhole_events == NULL) {
-        cached_blackhole_events = allocHashTable();
-
-        for (n = 0; (ce = peekEvent(n)) != NULL &&
-                    ce->ev->header.tag != EVENT_GC_START; n++) {
-            if (isEventCapValue(ce, SPARK_RUN) ||
-                isEventCapValue(ce, SPARK_STEAL) ||
-                isEventCapValue(ce, MSG_BLACKHOLE) ||
-                isEventCapValue(ce, THUNK_WHNF) ||
-                isEventCapValue(ce, THUNK_UPDATED) ||
-                isEventCapValue(ce, SUSPEND_COMPUTATION)) {
-                insertHashTable(cached_blackhole_events,
-                                ((EventCapValue *)ce->ev)->value,
-                                (void *)rtsTrue);
+    while (1) {
+        ce = peekEvent(n++);
+        if (ce == NULL) {
+            break;
+        } else if (ce->ev->header.tag == EVENT_ENTER_THUNK &&
+                   ((EventEnterThunk *)ce->ev)->id == id) {
+            break;
+        } else if (isEventCapValue(ce, THUNK_UPDATE)) {
+            p = lookupHashTable(spark_ptrs, (W_)((EventCapValue *)ce->ev)->value);
+            if (p == bh) {
+                break;
             }
         }
-
-        if (ce != NULL) {
-            ASSERT(ce->ev->header.tag == EVENT_GC_START);
-            cached_last_gc = ce->ev->header.time;
-        } else {
-            cached_last_gc = HS_WORD64_MAX;
-        }
     }
-    return lookupHashTable(cached_blackhole_events, value) != NULL;
+    return ce;
 }
+
+//rtsBool
+//isThunkUpdated(int capno, W_ id, StgClosure *bh, rtsBool isApStack)
+//{
+//    nat n = 0;
+//    CapEvent *ce;
+//    EventThunkUpdate *ev;
+//    StgClosure *p;
+//    nat last;
+//
+//    ASSERT(id != 0);
+//
+//    // stg_ap_stack checks heap and stack before pushing the update frame, so
+//    // it can enter the AP_STACK, enlarge its stack and then update the thunk
+//    if (isApStack) {
+//        last = EVENT_GC_START;
+//    } else {
+//        last = EVENT_STOP_THREAD;
+//    }
+//
+//    while (1) {
+//        ce = peekEvent(n++);
+//        if (ce == NULL || (ce->ev->header.tag == last && ce->capno == capno)) {
+//            return rtsFalse;
+//        }
+//        if (ce->ev->header.tag == EVENT_THUNK_UPDATE) {
+//            ev = (EventThunkUpdate *)ce->ev;
+//            if (ev->id == id) {
+//                if (ce->capno == capno) {
+//                    return rtsTrue;
+//                } else if (lookupHashTable(spark_ptrs, (W_)ev->ptr) == NULL) {
+//                    // found original pointer, start over
+//                    insertHashTable(spark_ptrs, (W_)ev->ptr, bh);
+//                    n = 0;
+//                }
+//            } else {
+//                p = lookupHashTable(spark_ptrs, (W_)ev->ptr);
+//                if (p == bh && ce->capno == capno) {
+//                    return rtsTrue;
+//                }
+//            }
+//        } else if (isEventCapValue(ce, SUSPEND_COMPUTATION)) {
+//            p = lookupHashTable(spark_ptrs, ((EventCapValue *)ce->ev)->value);
+//            // 'update thunk' event emitted after suspension, continue after
+//            // stopping
+//            if (p == NULL) {
+//                last = EVENT_GC_START;
+//            } else if (p == bh && ce->capno == capno) {
+//                return rtsTrue;
+//            }
+//        }
+//    }
+//}
+#endif
 
 // Returns the current event.
 CapEvent *

@@ -303,17 +303,14 @@ INFO_TABLE(stg_IND_PERM,1,0,IND_PERM,"IND_PERM","IND_PERM")
    waiting for the evaluation of the closure to finish.
    ------------------------------------------------------------------------- */
 
-#if defined(REPLAY) && defined(THREADED_RTS)
-#define REPLAY_SHIFT    (48)
-#define REPLAY_MASK     ((1 << REPLAY_SHIFT) - 1)
-#define BH_IND(p)       (p & REPLAY_MASK)
-#endif
-
 INFO_TABLE(stg_BLACKHOLE,1,0,BLACKHOLE,"BLACKHOLE","BLACKHOLE")
     (P_ node)
 {
     W_ r, info;
     P_ p, msg;
+#if defined(REPLAY) && defined(THREADED_RTS)
+    P_ ind;
+#endif
 
     TICK_ENT_DYN_IND(); /* tick */
 
@@ -321,19 +318,45 @@ retry:
 
 #if defined(REPLAY) && defined(THREADED_RTS)
     if (CInt[replay_enabled] == 1 :: CInt) {
-        (p) = ccall replayBlackHole(MyCapability() "ptr", node "ptr");
-        if (p != 0) {
+        (p) = ccall replayBlackHole(MyCapability() "ptr", node "ptr", Hp);
+        if (p != 0) { // XXX: delete
             ENTER(p);
         }
     }
 #endif
 
 #if defined(REPLAY) && defined(THREADED_RTS)
-    p = BH_IND(StgInd_indirectee(node));
+    ind = StgInd_indirectee(node);
+    // XXX: use TRACE_spark_full here and in StgCmmBind
+    if (REPLAY_ATOM(ind) != 0) {
+        ASSERT(REPLAY_IS_BH(ind));
+        if (REPLAY_ATOM(ind) == REPLAY_PTR_ATOM) {
+            p = REPLAY_PTR(ind);
+        // REPLAY_TSO_ATOM || REPLAY_SHARED_TSO
+        } else {
+            if (!REPLAY_IS_BH(ind)) {
+                ccall barf("StgMiscClosures.cmm:stg_BLACKHOLE: not TSO");
+            }
+            (p) = ccall findThread(REPLAY_TSO(ind));
+        }
+    } else {
+        p = REPLAY_PTR(ind);
+    }
 #else
     p = StgInd_indirectee(node);
 #endif
     if (GETTAG(p) != 0) {
+#if defined(REPLAY) && defined(THREADED_RTS)
+        if (REPLAY_ATOM(ind) != 0) {
+#ifdef DEBUG
+        ccall debugReplay("cap %d: tso %d: blackhole whnf %p -> %p [Hp = %p]\n",
+                          Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                          node, ind, Hp);
+#endif
+            ccall replayTraceCapValue(MyCapability() "ptr", 24, node "ptr"); // BH_WHNF
+            //StgInd_indirectee(node) = p;
+        }
+#endif
         return (p);
     }
 
@@ -376,6 +399,16 @@ retry:
     }
     else
     {
+#if defined(REPLAY) && defined(THREADED_RTS)
+        if (REPLAY_ATOM(ind) != 0) {
+#ifdef DEBUG
+        ccall debugReplay("cap %d: tso %d: blackhole thunk %p -> %p\n",
+                          Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                          node, ind);
+#endif
+            ccall replayTraceCapValue(MyCapability() "ptr", 18, node "ptr"); // BH_THUNK
+        }
+#endif
         ENTER(p);
     }
 }

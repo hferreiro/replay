@@ -1385,6 +1385,8 @@ typedef struct _RtsSymbolVal {
       SymI_HasProto(atomic_inc)                                         \
       SymI_HasProto(atomic_dec)                                         \
       SymI_HasProto(rtsReplayEnabled)                                   \
+      SymI_HasProto(replayEnter)                                        \
+      SymI_HasProto(stg_noDuplicate_info)                               \
       RTS_USER_SIGNALS_SYMBOLS                                          \
       RTS_INTCHAR_SYMBOLS
 

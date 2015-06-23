@@ -247,13 +247,29 @@ typedef struct _EventTaskReturnCap {
     EventCapNo  capno;
 } EventTaskReturnCap;
 
+typedef struct _EventEnterThunk {
+    EventHeader header;
+    StgWord64   id;
+    StgWord64   ptr;
+} EventEnterThunk;
+
+typedef struct _EventPtrMove {
+    EventHeader header;
+    StgWord64   ptr;
+    StgWord64   new_ptr;
+} EventPtrMove;
+
+typedef struct _EventMsgBlackHole {
+    EventHeader header;
+    StgWord64   ptr;
+    StgWord64   id;
+} EventMsgBlackHole;
+
 rtsBool isVariableSizeEvent(EventTypeNum tag);
 int eventSize(Event *ev);
 rtsBool equalEvents(Event *ev1, Event *ev2);
 
 rtsBool isEventCapValue(CapEvent *ce, int tag);
-
-StgTSO *findThread(StgThreadID id);
 
 void printEvent(Capability *cap, Event *ev);
 
@@ -308,6 +324,9 @@ Event *createCapValueEvent(nat tag, W_ value);
 Event *createTaskAcquireCapEvent(EventTaskId taskId);
 Event *createTaskReleaseCapEvent(EventTaskId taskId);
 Event *createTaskReturnCapEvent(EventTaskId taskId, EventCapNo capno);
+Event *createEnterThunkEvent(W_ id, StgPtr ptr);
+Event *createPtrMoveEvent(StgPtr ptr, StgPtr new_ptr);
+Event *createMsgBlackHoleEvent(StgPtr ptr, W_ id);
 
 #endif
 

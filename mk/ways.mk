@@ -22,7 +22,7 @@
 #
 # The ways currently defined.
 #
-ALL_WAYS=v p t l s mp mg debug dyn thr thr_l p_dyn debug_dyn thr_dyn thr_p_dyn thr_debug_dyn thr_p thr_debug debug_p thr_debug_p l_dyn thr_l_dyn
+ALL_WAYS=v p t l s mp mg debug dyn thr thr_l p_dyn debug_dyn thr_dyn thr_p_dyn thr_debug_dyn thr_p thr_debug debug_p thr_debug_p l_dyn thr_l_dyn r r_debug r thr_r thr_debug_r rl thr_rl thr_debug_rl
 
 #
 # The following ways currently have treated specially, p t mg,
@@ -52,6 +52,14 @@ WAY_mp_HC_OPTS= -static -parallel
 WAY_mg_NAME=GranSim
 WAY_mg_HC_OPTS= -static -gransim
 
+# Way 'r':
+WAY_r_NAME=replay
+WAY_r_HC_OPTS= -static -replay
+
+# Way 'rl':
+WAY_rl_NAME=replay-lbh
+WAY_rl_HC_OPTS= -static -replay-lbh
+
 #
 # These ways apply to the RTS only:
 #
@@ -68,6 +76,14 @@ WAY_thr_p_HC_OPTS= -static -optc-DTHREADED_RTS -prof
 WAY_thr_l_NAME=threaded event logging
 WAY_thr_l_HC_OPTS= -static -optc-DTHREADED_RTS -eventlog
 
+# Way 'thr_r':
+WAY_thr_r_NAME=threaded replay
+WAY_thr_r_HC_OPTS= -static -optc-DTHREADED_RTS -replay
+
+# Way 'thr_rl':
+WAY_thr_rl_NAME=threaded replay-lbh
+WAY_thr_rl_HC_OPTS= -static -optc-DTHREADED_RTS -replay-lbh
+
 # Way 'debug':
 WAY_debug_NAME=debug
 WAY_debug_HC_OPTS= -static -optc-DDEBUG -ticky -DTICKY_TICKY
@@ -83,6 +99,14 @@ WAY_thr_debug_HC_OPTS= -static -optc-DTHREADED_RTS -optc-DDEBUG
 # Way 'thr_debug_p':
 WAY_thr_debug_p_NAME=threaded debug profiling
 WAY_thr_debug_p_HC_OPTS= -static -optc-DTHREADED_RTS -optc-DDEBUG -prof
+
+# Way 'thr_debug_r':
+WAY_thr_debug_r_NAME=threaded debug replay
+WAY_thr_debug_r_HC_OPTS= -static -optc-DTHREADED_RTS -optc-DDEBUG -replay
+
+# Way 'thr_debug_rl':
+WAY_thr_debug_rl_NAME=threaded debug replay-lbh
+WAY_thr_debug_rl_HC_OPTS= -static -optc-DTHREADED_RTS -optc-DDEBUG -replay-lbh
 
 # Way 'dyn': build dynamic shared libraries
 WAY_dyn_NAME=dyn

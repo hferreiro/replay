@@ -200,6 +200,12 @@ GarbageCollect (nat collect_gen,
   CostCentreStack *save_CCS[n_capabilities];
 #endif
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+  if (!replay_enabled) {
+      replayStartGC(cap);
+  }
+#endif
+
   ACQUIRE_SM_LOCK;
 
 #if defined(RTS_USER_SIGNALS)
@@ -217,10 +223,6 @@ GarbageCollect (nat collect_gen,
 
   // tell the stats department that we've started a GC
   stat_startGC(cap, gct);
-
-#if defined(REPLAY) && defined(THREADED_RTS)
-  replayStartGC();
-#endif
 
   // lock the StablePtr table
   stableLock();
@@ -410,11 +412,18 @@ GarbageCollect (nat collect_gen,
       break;
   }
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+  replayTraceCapTag(cap, GC_END);
+#endif
+
   if (!DEBUG_IS_ON && n_gc_threads != 1) {
       clearNursery(cap);
   }
 
   shutdown_gc_threads(gct->thread_index);
+
+  // XXX: move GC_END and replayGcEnd here! What for replay_main_gc_task which
+  // is needed for events in stat_endGC?
 
   // Now see which stable names are still alive.
   gcStableTables();
@@ -425,6 +434,11 @@ GarbageCollect (nat collect_gen,
           pruneSparkQueue(capabilities[n]);
       }
   } else {
+#ifdef REPLAY
+      if (replay_enabled) {
+          pruneSparkQueue(cap);
+      } else
+#endif
       for (n = 0; n < n_capabilities; n++) {
           if (n == cap->no || gc_threads[n]->idle) {
               pruneSparkQueue(capabilities[n]);
@@ -457,26 +471,23 @@ GarbageCollect (nat collect_gen,
   copied = 0;
   par_max_copied = 0;
   par_tot_copied = 0;
-  {
+  if (n_gc_threads == 1) {
+      copied = gc_threads[cap->no]->copied;
+  } else {
       nat i;
       for (i=0; i < n_gc_threads; i++) {
-          if (n_gc_threads > 1) {
-              debugTrace(DEBUG_gc,"thread %d:", i);
-              debugTrace(DEBUG_gc,"   copied           %ld", gc_threads[i]->copied * sizeof(W_));
-              debugTrace(DEBUG_gc,"   scanned          %ld", gc_threads[i]->scanned * sizeof(W_));
-              debugTrace(DEBUG_gc,"   any_work         %ld", gc_threads[i]->any_work);
-              debugTrace(DEBUG_gc,"   no_work          %ld", gc_threads[i]->no_work);
-              debugTrace(DEBUG_gc,"   scav_find_work %ld",   gc_threads[i]->scav_find_work);
-          }
+          debugTrace(DEBUG_gc,"thread %d:", i);
+          debugTrace(DEBUG_gc,"   copied           %ld", gc_threads[i]->copied * sizeof(W_));
+          debugTrace(DEBUG_gc,"   scanned          %ld", gc_threads[i]->scanned * sizeof(W_));
+          debugTrace(DEBUG_gc,"   any_work         %ld", gc_threads[i]->any_work);
+          debugTrace(DEBUG_gc,"   no_work          %ld", gc_threads[i]->no_work);
+          debugTrace(DEBUG_gc,"   scav_find_work %ld",   gc_threads[i]->scav_find_work);
+
           copied += gc_threads[i]->copied;
           par_max_copied = stg_max(gc_threads[i]->copied, par_max_copied);
       }
-      par_tot_copied = copied;
-      if (n_gc_threads == 1) {
-          par_max_copied = 0;
-          par_tot_copied = 0;
-      }
   }
+  par_tot_copied = copied;
 
   // Run through all the generations/steps and tidy up.
   // We're going to:
@@ -767,10 +778,6 @@ GarbageCollect (nat collect_gen,
   memInventory(DEBUG_gc);
 #endif
 
-#if defined(REPLAY) && defined(THREADED_RTS)
-  replayEndGC();
-#endif
-
   // ok, GC over: tell the stats department what happened.
   stat_endGC(cap, gct, live_words, copied,
              live_blocks * BLOCK_SIZE_W - live_words /* slop */,
@@ -786,6 +793,12 @@ GarbageCollect (nat collect_gen,
   RELEASE_SM_LOCK;
 
   SET_GCT(saved_gct);
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+  if (!replay_enabled) {
+      replayEndGC(cap);
+  }
+#endif
 }
 
 /* -----------------------------------------------------------------------------
@@ -1041,6 +1054,10 @@ gcWorkerThread (Capability *cap)
 {
     gc_thread *saved_gct;
 
+#ifdef REPLAY
+    ASSERT(!replay_enabled);
+#endif
+
     // necessary if we stole a callee-saves register for gct:
     saved_gct = gct;
 
@@ -1123,6 +1140,13 @@ waitForGcThreads (Capability *cap USED_IF_THREADS)
     const nat me = cap->no;
     nat i, j;
     rtsBool retry = rtsTrue;
+
+#ifdef REPLAY
+    if (replay_enabled) {
+        replayWaitForGcThreads(cap);
+        return;
+    }
+#endif
 
     while(retry) {
         for (i=0; i < n_threads; i++) {

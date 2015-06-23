@@ -35,8 +35,9 @@ INFO_TABLE_RET ( stg_upd_frame, UPDATE_FRAME,
     TICK_UPD_CON_IN_NEW(sizeW_fromITBL(%GET_STD_INFO(updatee)));
 
 #ifdef DEBUG
-    ccall debugReplay("cap %d: upd_frame: update BH %p with %p\n",
-                      Capability_no(MyCapability()), updatee "ptr", UNTAG(ret) "ptr");
+    ccall debugReplay("cap %d: tso %d: upd_frame: update BH %p with %p (was %p)\n",
+                      Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                      updatee "ptr", ret "ptr", StgInd_indirectee(updatee) "ptr");
 #endif
     updateWithIndirection(updatee, ret, return (ret));
 }
@@ -51,13 +52,33 @@ INFO_TABLE_RET ( stg_marked_upd_frame, UPDATE_FRAME,
                  UPDATE_FRAME_FIELDS(W_,P_,info_ptr,_ccs,_unused,updatee) )
     return (P_ ret) /* the closure being returned */
 {
-    W_ v;
+    W_ v, ind;
 
     ASSERT(HpAlloc == 0); // Note [HpAlloc]
 
     // we know the closure is a BLACKHOLE
 #if defined(REPLAY) && defined(THREADED_RTS)
-    v = BH_IND(StgInd_indirectee(updatee));
+    ind = StgInd_indirectee(updatee);
+    ////if (CInt[replay_enabled] == 1 :: CInt && REPLAY_ATOM(ind) != 0) {
+    //if (CInt[replay_enabled] == 1 :: CInt) {
+    //    (v) = ccall replayMarkedUpdFrame(MyCapability() "ptr", updatee "ptr", ret "ptr", Hp "ptr");
+    //    return (v);
+    //}
+    //// XXX: use TRACE_spark_full here and in StgCmmBind
+    //if (REPLAY_ATOM(ind) != 0) {
+    //    ASSERT(REPLAY_IS_BH(ind));
+    //    if (REPLAY_ATOM(ind) == REPLAY_PTR_ATOM) {
+    //        v = REPLAY_PTR(ind);
+    //    // REPLAY_TSO_ATOM || REPLAY_SHARED_TSO
+    //    } else {
+    //        if (!REPLAY_IS_TSO(ind)) {
+    //            ccall barf("Updates.cmm:stg_marked_upd_frame: not TSO");
+    //        }
+    //        (v) = ccall findThread(REPLAY_TSO(ind));
+    //    }
+    //} else {
+        v = ind;
+    //}
 #else
     v = StgInd_indirectee(updatee);
 #endif
@@ -67,8 +88,14 @@ INFO_TABLE_RET ( stg_marked_upd_frame, UPDATE_FRAME,
         // other one to increase sharing, but check the blocking
         // queues to see if any threads were waiting on this BLACKHOLE.
 #ifdef DEBUG
-        ccall debugReplay("cap %d: collision: %p -> %p already updated\n",
-                          Capability_no(MyCapability()), updatee "ptr", UNTAG(v) "ptr");
+        ccall debugReplay("cap %d: tso %d: collision: %p -> %p already updated with %p [Hp = %p]\n",
+                          Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                          updatee "ptr", ret "ptr", v "ptr", Hp "ptr");
+#endif
+#if defined(REPLAY) && defined(THREADED_RTS)
+        if (CInt[TRACE_spark_full] == 1 :: CInt) {
+            ccall replayTraceCapValue(MyCapability() "ptr", 29, updatee "ptr"); // COLLISION_WHNF
+        }
 #endif
         ccall checkBlockingQueues(MyCapability() "ptr", CurrentTSO "ptr");
         return (v);
@@ -76,23 +103,31 @@ INFO_TABLE_RET ( stg_marked_upd_frame, UPDATE_FRAME,
 
     // common case: it is still our BLACKHOLE
     if (v == CurrentTSO) {
-#ifdef DEBUG
-        ccall debugReplay("cap %d: marked_upd_frame: update our BH %p\n",
-                          Capability_no(MyCapability()), updatee "ptr");
+#if defined(REPLAY) && defined(THREADED_RTS) && defined(DEBUG)
+        ASSERT(REPLAY_ATOM(ind) != REPLAY_PTR_ATOM);
+        //if (REPLAY_ATOM(ind) == REPLAY_SHARED_TSO) {
+            ccall debugReplay("cap %d: tso %d: marked_upd_frame: update our BH %p -> %p with %p [Hp = %p]\n",
+                              Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                              updatee "ptr", ind "ptr", ret "ptr", Hp "ptr");
+        //}
 #endif
-        // the indirectee needs to be updated but the TSO was saved in
-        // threadPaused without BH_IND_ATOM, so it will only refuse to
-        // perform the update if a concurrent update happened
         updateWithIndirection(updatee, ret, return (ret));
     }
 
 #ifdef DEBUG
-    ccall debugReplay("cap %d: marked_upd_frame: other case updateThunk\n",
-                      Capability_no(MyCapability()));
+    ccall debugReplay("cap %d: tso %d: marked_upd_frame: other case updateThunk(%p, %p) [Hp = %p]\n",
+                      Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                      updatee "ptr", ret "ptr", Hp "ptr");
 #endif
+
     // The other cases are all handled by the generic code
-    ccall updateThunk (MyCapability() "ptr", CurrentTSO "ptr",
-                       updatee "ptr", ret "ptr");
+    (v) = ccall updateThunk (MyCapability() "ptr", CurrentTSO "ptr",
+                             updatee "ptr", ret "ptr");
+#if defined(REPLAY) && defined(THREADED_RTS) && defined(DEBUG)
+//    if (CInt[TRACE_spark_full] == 1 :: CInt && v != 0) {
+//        ENTER(v);
+//    }
+#endif
 
     return (ret);
 }
@@ -107,6 +142,11 @@ INFO_TABLE_RET ( stg_bh_upd_frame, UPDATE_FRAME,
                  UPDATE_FRAME_FIELDS(W_,P_,info_ptr,ccs,_unused,updatee) )
     return (P_ ret) /* the closure being returned */
 {
+#ifdef DEBUG
+    ccall debugReplay("cap %d: tso %d: bh_upd_frame: %p %p\n",
+                      Capability_no(MyCapability()), StgTSO_id(CurrentTSO),
+                      updatee "ptr", ret "ptr");
+#endif
     // This all compiles away to a single jump instruction (sigh)
     jump RET_LBL(stg_marked_upd_frame)
         ( UPDATE_FRAME_FIELDS(,,info_ptr,ccs,_unused,updatee) )

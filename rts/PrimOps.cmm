@@ -338,6 +338,9 @@ stg_casMutVarzh ( gcptr mv, gcptr old, gcptr new )
 stg_atomicModifyMutVarzh ( gcptr mv, gcptr f )
 {
     W_ z, x, y, r, h;
+#if defined(REPLAY) && defined(THREADED_RTS)
+    W_ id_z, id_y, id_r;
+#endif
 
     /* If x is the current contents of the MutVar#, then
        We want to make the new contents point to
@@ -380,6 +383,12 @@ stg_atomicModifyMutVarzh ( gcptr mv, gcptr f )
    z = Hp - THUNK_2_SIZE + WDS(1);
    SET_HDR(z, stg_ap_2_upd_info, CCCS);
    LDV_RECORD_CREATE(z);
+#if defined(REPLAY) && defined(THREADED_RTS)
+   if (CInt[TRACE_spark_full] == 1 :: CInt) {
+       (id_z) = ccall newThunkId(MyCapability());
+       StgInd_indirectee(z) = REPLAY_SET_ID(id_z, CurrentTSO);
+   }
+#endif
    StgThunk_payload(z,0) = f;
 
    TICK_ALLOC_THUNK_1();
@@ -387,6 +396,12 @@ stg_atomicModifyMutVarzh ( gcptr mv, gcptr f )
    y = z - THUNK_1_SIZE;
    SET_HDR(y, stg_sel_0_upd_info, CCCS);
    LDV_RECORD_CREATE(y);
+#if defined(REPLAY) && defined(THREADED_RTS)
+   if (CInt[TRACE_spark_full] == 1 :: CInt) {
+       (id_y) = ccall newThunkId(MyCapability());
+       StgInd_indirectee(y) = REPLAY_SET_ID(id_y, CurrentTSO);
+   }
+#endif
    StgThunk_payload(y,0) = z;
 
    TICK_ALLOC_THUNK_1();
@@ -394,6 +409,12 @@ stg_atomicModifyMutVarzh ( gcptr mv, gcptr f )
    r = y - THUNK_1_SIZE;
    SET_HDR(r, stg_sel_1_upd_info, CCCS);
    LDV_RECORD_CREATE(r);
+#if defined(REPLAY) && defined(THREADED_RTS)
+   if (CInt[TRACE_spark_full] == 1 :: CInt) {
+       (id_r) = ccall newThunkId(MyCapability());
+       StgInd_indirectee(r) = REPLAY_SET_ID(id_r, CurrentTSO);
+   }
+#endif
    StgThunk_payload(r,0) = z;
 
  retry:
@@ -2242,5 +2263,15 @@ stg_traceMarkerzh ( W_ msg )
 
 #endif
    return ();
+}
+
+stg_traceExpressionzh ( W_ id, P_ p )
+{
+#if defined(REPLAY)
+    if (CInt[replay_enabled] == 1 :: CInt) {
+        ccall replayTraceExpression(MyCapability(), p, id);
+    }
+#endif
+    ENTER(p);
 }
 

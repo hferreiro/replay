@@ -118,6 +118,9 @@ void traceCapValue_stderr(Capability *cap,
 void traceTaskCap_stderr(Capability *cap,
                          EventTypeNum tag,
                          EventTaskId taskid);
+void traceEnterThunk_stderr(Capability *cap, W_ id, StgPtr ptr);
+void tracePtrMove_stderr(Capability *cap, StgPtr ptr, StgPtr new_ptr);
+void traceMsgBlackHole_stderr(Capability *cap, StgPtr ptr, W_ id);
 #endif
 
 #ifdef TRACING
@@ -324,6 +327,9 @@ void traceCapValue_ (Capability *cap, nat tag, W_ value);
 void traceTaskAcquireCap_(Capability *cap, Task *task);
 void traceTaskReleaseCap_(Capability *cap, Task *task);
 void traceTaskReturnCap_(Task *task, Capability *cap);
+void traceEnterThunk_(Capability *cap, W_ id, StgPtr ptr);
+void tracePtrMove_(Capability *cap, StgPtr ptr, StgPtr new_ptr);
+void traceMsgBlackHole_(Capability *cap, StgPtr ptr, W_ id);
 
 #else /* !TRACING */
 
@@ -361,6 +367,9 @@ INLINE_HEADER void traceEventStartup_ (int n_caps STG_UNUSED) {};
 #define traceTaskAcquireCap_(cap, task) /* nothing */
 #define traceTaskReleaseCap_(cap, task) /* nothing */
 #define traceTaskReturnCap_(task, cap) /* nothing */
+#define traceEnterThunk_(cap, id, ptr) /* nothing */
+#define tracePtrMove_(cap, ptr, new_ptr) /* nothing */
+#define traceMsgBlackHole_(cap, ptr, id) /* nothing */
 
 #endif /* TRACING */
 
@@ -982,6 +991,33 @@ INLINE_HEADER void traceTaskReturnCap (Task       *task USED_IF_TRACING,
     ASSERT(task->cap == cap);
     if (RTS_UNLIKELY(TRACE_spark_full)) {
         traceTaskReturnCap_(task, cap);
+    }
+}
+
+INLINE_HEADER void traceEnterThunk (Capability *cap USED_IF_TRACING,
+                                    W_          id USED_IF_TRACING,
+                                    StgPtr      ptr USED_IF_TRACING)
+{
+    if (RTS_UNLIKELY(TRACE_spark_full)) {
+        traceEnterThunk_(cap, id, ptr);
+    }
+}
+
+INLINE_HEADER void tracePtrMove (Capability *cap USED_IF_TRACING,
+                                 StgPtr      ptr USED_IF_TRACING,
+                                 StgPtr      new_ptr USED_IF_TRACING)
+{
+    if (RTS_UNLIKELY(TRACE_spark_full)) {
+        tracePtrMove_(cap, ptr, new_ptr);
+    }
+}
+
+INLINE_HEADER void traceMsgBlackHole (Capability *cap USED_IF_TRACING,
+                                      StgPtr      ptr USED_IF_TRACING,
+                                      W_          id USED_IF_TRACING)
+{
+    if (RTS_UNLIKELY(TRACE_spark_full)) {
+        traceMsgBlackHole_(cap, ptr, id);
     }
 }
 

@@ -30,8 +30,8 @@ void wakeupThreadOnCapability (Capability *cap,
                                StgTSO *tso);
 #endif
 
-void updateThunk         (Capability *cap, StgTSO *tso,
-                          StgClosure *thunk, StgClosure *val);
+StgClosure *updateThunk         (Capability *cap, StgTSO *tso,
+                                 StgClosure *thunk, StgClosure *val);
 
 rtsBool removeThreadFromQueue     (Capability *cap, StgTSO **queue, StgTSO *tso);
 rtsBool removeThreadFromDeQueue   (Capability *cap, StgTSO **head, StgTSO **tail, StgTSO *tso);

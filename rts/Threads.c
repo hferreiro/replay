@@ -23,6 +23,7 @@
 #include "Printer.h"
 #include "sm/Sanity.h"
 #include "sm/Storage.h"
+#include "Replay.h"
 
 #include <string.h>
 
@@ -128,6 +129,9 @@ createThread(Capability *cap, W_ size)
     tso->global_link = g0->threads;
     g0->threads = tso;
 
+#ifdef REPLAY
+    replayNewThread(tso);
+#endif
     if (!replay_enabled) {
         traceEventCreateThread(cap, tso);
     }
@@ -402,7 +406,11 @@ checkBlockingQueues (Capability *cap, StgTSO *tso)
         p = bq->bh;
 
         if (p->header.info != &stg_BLACKHOLE_info ||
+#if defined(REPLAY) && defined(THREADED_RTS)
+            REPLAY_IND_PTR(p) != (StgClosure*)bq)
+#else
             ((StgInd *)p)->indirectee != (StgClosure*)bq)
+#endif
         {
             wakeBlockingQueue(cap,bq);
         }   
@@ -417,62 +425,115 @@ checkBlockingQueues (Capability *cap, StgTSO *tso)
    awaken any threads that are blocked on it.
    ------------------------------------------------------------------------- */
 
-void
+StgClosure *
 updateThunk (Capability *cap, StgTSO *tso, StgClosure *thunk, StgClosure *val)
 {
     StgClosure *v;
     StgTSO *owner;
     const StgInfoTable *i;
 
+#if defined(REPLAY) && defined(THREADED_RTS)
+    if (replay_enabled) {
+        return replayUpdateThunk(cap, tso, thunk, val);
+    }
+#endif
+
     i = thunk->header.info;
     if (i != &stg_BLACKHOLE_info &&
         i != &stg_CAF_BLACKHOLE_info &&
         i != &__stg_EAGER_BLACKHOLE_info &&
         i != &stg_WHITEHOLE_info) {
-#if defined(REPLAY) && defined(THREADED_RTS)
-        maybeUpdateWithIndirection(cap, thunk, val);
-#else
+        debugReplay("cap %d: updateThunk: %p was not updated\n", cap->no, thunk);
         updateWithIndirection(cap, thunk, val);
-#endif
-        return;
+        return NULL;
     }
 
-#if defined(REPLAY) && defined(THREADED_RTS)
-    v = BH_IND(((StgInd*)thunk)->indirectee);
-#else
     v = ((StgInd*)thunk)->indirectee;
+#if defined(REPLAY) && defined(THREADED_RTS)
+    if (REPLAY_ATOM(v) != 0) {
+        ASSERT(REPLAY_IS_BH(v));
+        if (REPLAY_ATOM(v) == REPLAY_PTR_ATOM) {
+            v = REPLAY_PTR(v);
+        // REPLAY_TSO_ATOM || REPLAY_SHARED_TSO
+        } else {
+            if (!REPLAY_IS_TSO(v)) {
+                barf("updateThunk: not TSO");
+            }
+            v = (StgClosure *)findThread(REPLAY_TSO(v));
+        }
+    }
+    ASSERT(REPLAY_ATOM(v) == 0);
 #endif
 
-    // compulsory update, comming from updateAdjacentFrames or
-    // stg_marked_upd_frame
-    updateWithIndirection(cap, thunk, val);
+#if defined(REPLAY) && defined(THREADED_RTS)
+    if (!TRACE_spark_full)
+#endif
+    {
+        debugReplay("cap %d: updateThunk: updating %p\n", cap->no, thunk);
+        updateWithIndirection(cap, thunk, val);
+    }
 
     // sometimes the TSO is locked when we reach here, so its header
     // might be WHITEHOLE.  Hence check for the correct owner using
     // pointer equality first.
     if ((StgTSO*)v == tso) {
-        return;
+#if defined(REPLAY) && defined(THREADED_RTS)
+        if (TRACE_spark_full) {
+            debugReplay("cap %d: updateThunk: updating %p\n", cap->no, thunk);
+            updateWithIndirection(cap, thunk, val);
+        }
+#endif
+        return NULL;
     }
 
     i = v->header.info;
     if (i == &stg_TSO_info) {
+#if defined(REPLAY) && defined(THREADED_RTS)
+        replayTraceCapValue(cap, COLLISION_OTHER, (W_)thunk);
+#endif
         checkBlockingQueues(cap, tso);
-        return;
+#if defined(REPLAY) && defined(THREADED_RTS)
+        return TRACE_spark_full ? thunk : NULL;
+#else
+        return NULL;
+#endif
     }
 
     if (i != &stg_BLOCKING_QUEUE_CLEAN_info &&
         i != &stg_BLOCKING_QUEUE_DIRTY_info) {
+#if defined(REPLAY) && defined(THREADED_RTS)
+        replayTraceCapValue(cap, COLLISION_OTHER, (W_)thunk);
+#endif
         checkBlockingQueues(cap, tso);
-        return;
+#if defined(REPLAY) && defined(THREADED_RTS)
+        return TRACE_spark_full ? thunk : NULL;
+#else
+        return NULL;
+#endif
     }
 
     owner = ((StgBlockingQueue*)v)->owner;
 
     if (owner != tso) {
+#if defined(REPLAY) && defined(THREADED_RTS)
+        replayTraceCapValue(cap, COLLISION_OTHER, (W_)thunk);
+#endif
         checkBlockingQueues(cap, tso);
+#if defined(REPLAY) && defined(THREADED_RTS)
+        return TRACE_spark_full ? thunk : NULL;
+#else
+        return NULL;
+#endif
     } else {
+#if defined(REPLAY) && defined(THREADED_RTS)
+        if (TRACE_spark_full) {
+            debugReplay("cap %d: updateThunk: updating %p\n", cap->no, thunk);
+            updateWithIndirection(cap, thunk, val);
+        }
+#endif
         wakeBlockingQueue(cap, (StgBlockingQueue*)v);
     }
+    return NULL;
 }
 
 /* ---------------------------------------------------------------------------

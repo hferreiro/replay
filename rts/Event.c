@@ -83,6 +83,9 @@ static int event_struct_size[NUM_GHC_EVENT_TAGS] = {
     sizeof(EventTaskAcquireCap),
     sizeof(EventTaskReleaseCap),
     sizeof(EventTaskReturnCap),
+    sizeof(EventEnterThunk),
+    sizeof(EventPtrMove),
+    sizeof(EventMsgBlackHole),
 };
 
 rtsBool
@@ -163,22 +166,6 @@ isEventCapValue(CapEvent *ce, int tag)
             ((EventCapValue *)ce->ev)->tag == tag);
 }
 
-StgTSO *
-findThread(StgThreadID id)
-{
-    StgTSO *t;
-    nat g;
-
-    for (g = 0; g < RtsFlags.GcFlags.generations; g++) {
-        for (t = generations[g].threads; t != END_TSO_QUEUE; t = t->global_link) {
-            if (t->id == id) {
-                return t;
-            }
-        }
-    }
-    barf("findThread: thread not found");
-}
-
 void
 printEvent(Capability *cap USED_IF_DEBUG, Event *ev)
 {
@@ -189,7 +176,7 @@ printEvent(Capability *cap USED_IF_DEBUG, Event *ev)
                 ev->header.time, EventDesc[tag],
                 all_tasks && myTask() ? (int)myTask()->no : -1);
 #ifdef DEBUG
-    if (!replay_enabled) return;
+    //if (!replay_enabled) return;
     switch (tag) {
     case EVENT_CREATE_THREAD:
     case EVENT_RUN_THREAD:
@@ -285,14 +272,26 @@ printEvent(Capability *cap USED_IF_DEBUG, Event *ev)
     case EVENT_OSPROCESS_PPID:
     case EVENT_SPARK_COUNTERS:
     case EVENT_WALL_CLOCK_TIME:
-    case EVENT_HEAP_ALLOCATED:
-    case EVENT_HEAP_SIZE:
-    case EVENT_HEAP_LIVE:
     case EVENT_HEAP_INFO_GHC:
-    case EVENT_GC_STATS_GHC:
     {
         // TODO: unimplemented
         debugReplay("\n");
+        break;
+    }
+    case EVENT_HEAP_ALLOCATED:
+    case EVENT_HEAP_SIZE:
+    case EVENT_HEAP_LIVE:
+    {
+        EventCapsetBytes *ecb = (EventCapsetBytes *)ev;
+        traceCap_stderr(cap, "capset: %d bytes: %" FMT_Word,
+                        ecb->capset, ecb->bytes);
+        break;
+    }
+    case EVENT_GC_STATS_GHC:
+    {
+        EventGcStatsGHC *egsg = (EventGcStatsGHC *)ev;
+        traceCap_stderr(cap, "capset: %d gen: %d par_n_threads: %d par_tot_copied: %" FMT_Word,
+                        egsg->capset, egsg->gen, egsg->par_n_threads, egsg->par_tot_copied);
         break;
     }
     case EVENT_SPARK_CREATE:
@@ -387,6 +386,24 @@ printEvent(Capability *cap USED_IF_DEBUG, Event *ev)
     {
         EventTaskReturnCap *etrc = (EventTaskReturnCap *)ev;
         traceTaskCap_stderr(capabilities[etrc->capno], tag, etrc->task);
+        break;
+    }
+    case EVENT_ENTER_THUNK:
+    {
+        EventEnterThunk *eet = (EventEnterThunk *)ev;
+        traceEnterThunk_stderr(cap, eet->id, (StgPtr)eet->ptr);
+        break;
+    }
+    case EVENT_POINTER_MOVE:
+    {
+        EventPtrMove *epm = (EventPtrMove *)ev;
+        tracePtrMove_stderr(cap, (StgPtr)epm->ptr, (StgPtr)epm->new_ptr);
+        break;
+    }
+    case EVENT_MSG_BLACKHOLE:
+    {
+        EventMsgBlackHole *embh = (EventMsgBlackHole *)ev;
+        traceMsgBlackHole_stderr(cap, (StgPtr)embh->ptr, embh->id);
         break;
     }
     default:
@@ -931,6 +948,42 @@ createTaskReturnCapEvent(EventTaskId taskId, EventCapNo capno)
     ev = (EventTaskReturnCap *)createEvent(EVENT_TASK_RETURN_CAP);
     ev->task = taskId;
     ev->capno = capno;
+
+    return (Event *)ev;
+}
+
+Event *
+createEnterThunkEvent(W_ id, StgPtr ptr)
+{
+    EventEnterThunk *ev;
+
+    ev = (EventEnterThunk *)createEvent(EVENT_ENTER_THUNK);
+    ev->id = id;
+    ev->ptr = (W_)ptr;
+
+    return (Event *)ev;
+}
+
+Event *
+createPtrMoveEvent(StgPtr ptr, StgPtr new_ptr)
+{
+    EventPtrMove *ev;
+
+    ev = (EventPtrMove *)createEvent(EVENT_POINTER_MOVE);
+    ev->ptr = (W_)ptr;
+    ev->new_ptr = (W_)new_ptr;
+
+    return (Event *)ev;
+}
+
+Event *
+createMsgBlackHoleEvent(StgPtr ptr, W_ id)
+{
+    EventMsgBlackHole *ev;
+
+    ev = (EventMsgBlackHole *)createEvent(EVENT_MSG_BLACKHOLE);
+    ev->ptr = (W_)ptr;
+    ev->id = id;
 
     return (Event *)ev;
 }

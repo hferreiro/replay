@@ -364,6 +364,8 @@ data GeneralFlag
    | Opt_GranMacros
    | Opt_PIC
    | Opt_SccProfilingOn
+   | Opt_ReplayOn
+   | Opt_DebugOn
    | Opt_Ticky
    | Opt_Ticky_Allocd
    | Opt_Ticky_LNE
@@ -1068,6 +1070,8 @@ data Way
   | WayGran
   | WayNDP
   | WayDyn
+  | WayReplay
+  | WayReplayLazy
   deriving (Eq, Ord, Show)
 
 allowed_combination :: [Way] -> Bool
@@ -1090,6 +1094,10 @@ allowed_combination way = and [ x `allowedWith` y
         WayProf `allowedWith` WayNDP            = True
         WayThreaded `allowedWith` WayProf       = True
         WayThreaded `allowedWith` WayEventLog   = True
+        WayThreaded `allowedWith` WayReplay     = True
+        WayEventLog `allowedWith` WayReplay     = True
+        WayThreaded `allowedWith` WayReplayLazy = True
+        WayEventLog `allowedWith` WayReplayLazy = True
         _ `allowedWith` _                       = False
 
 mkBuildTag :: [Way] -> String
@@ -1105,6 +1113,8 @@ wayTag WayEventLog = "l"
 wayTag WayPar      = "mp"
 wayTag WayGran     = "mg"
 wayTag WayNDP      = "ndp"
+wayTag WayReplay   = "r"
+wayTag WayReplayLazy = "rl"
 
 wayRTSOnly :: Way -> Bool
 wayRTSOnly (WayCustom {}) = False
@@ -1116,6 +1126,8 @@ wayRTSOnly WayEventLog = True
 wayRTSOnly WayPar      = False
 wayRTSOnly WayGran     = False
 wayRTSOnly WayNDP      = False
+wayRTSOnly WayReplay   = False
+wayRTSOnly WayReplayLazy = False
 
 wayDesc :: Way -> String
 wayDesc (WayCustom xs) = xs
@@ -1127,12 +1139,14 @@ wayDesc WayEventLog = "RTS Event Logging"
 wayDesc WayPar      = "Parallel"
 wayDesc WayGran     = "GranSim"
 wayDesc WayNDP      = "Nested data parallelism"
+wayDesc WayReplay   = "Replay"
+wayDesc WayReplayLazy = "Replay with lazy blackholing"
 
 -- Turn these flags on when enabling this way
 wayGeneralFlags :: Platform -> Way -> [GeneralFlag]
 wayGeneralFlags _ (WayCustom {}) = []
 wayGeneralFlags _ WayThreaded = []
-wayGeneralFlags _ WayDebug    = []
+wayGeneralFlags _ WayDebug    = [Opt_DebugOn]
 wayGeneralFlags _ WayDyn      = [Opt_PIC]
     -- We could get away without adding -fPIC when compiling the
     -- modules of a program that is to be linked with -dynamic; the
@@ -1146,6 +1160,8 @@ wayGeneralFlags _ WayEventLog = []
 wayGeneralFlags _ WayPar      = [Opt_Parallel]
 wayGeneralFlags _ WayGran     = [Opt_GranMacros]
 wayGeneralFlags _ WayNDP      = []
+wayGeneralFlags _ WayReplay   = [Opt_ReplayOn] -- , Opt_EagerBlackHoling]
+wayGeneralFlags _ WayReplayLazy = [Opt_ReplayOn]
 
 -- Turn these flags off when enabling this way
 wayUnsetGeneralFlags :: Platform -> Way -> [GeneralFlag]
@@ -1162,6 +1178,8 @@ wayUnsetGeneralFlags _ WayEventLog = []
 wayUnsetGeneralFlags _ WayPar      = []
 wayUnsetGeneralFlags _ WayGran     = []
 wayUnsetGeneralFlags _ WayNDP      = []
+wayUnsetGeneralFlags _ WayReplay   = []
+wayUnsetGeneralFlags _ WayReplayLazy = [] -- [Opt_EagerBlackHoling]
 
 wayExtras :: Platform -> Way -> DynFlags -> DynFlags
 wayExtras _ (WayCustom {}) dflags = dflags
@@ -1174,6 +1192,8 @@ wayExtras _ WayPar      dflags = exposePackage' "concurrent" dflags
 wayExtras _ WayGran     dflags = exposePackage' "concurrent" dflags
 wayExtras _ WayNDP      dflags = setExtensionFlag' Opt_ParallelArrays
                                $ setGeneralFlag' Opt_Vectorise dflags
+wayExtras _ WayReplay   dflags = dflags
+wayExtras _ WayReplayLazy dflags = dflags
 
 wayOptc :: Platform -> Way -> [String]
 wayOptc _ (WayCustom {}) = []
@@ -1188,6 +1208,8 @@ wayOptc _ WayEventLog   = ["-DTRACING"]
 wayOptc _ WayPar        = ["-DPAR", "-w"]
 wayOptc _ WayGran       = ["-DGRAN"]
 wayOptc _ WayNDP        = []
+wayOptc _ WayReplay     = ["-DREPLAY"]
+wayOptc _ WayReplayLazy = ["-DREPLAY", "-DREPLAY_LAZY"]
 
 wayOptl :: Platform -> Way -> [String]
 wayOptl _ (WayCustom {}) = []
@@ -1211,6 +1233,8 @@ wayOptl _ WayPar        = ["-L${PVM_ROOT}/lib/${PVM_ARCH}",
                            "-lgpvm3"]
 wayOptl _ WayGran       = []
 wayOptl _ WayNDP        = []
+wayOptl _ WayReplay     = []
+wayOptl _ WayReplayLazy = []
 
 wayOptP :: Platform -> Way -> [String]
 wayOptP _ (WayCustom {}) = []
@@ -1222,6 +1246,8 @@ wayOptP _ WayEventLog = ["-DTRACING"]
 wayOptP _ WayPar      = ["-D__PARALLEL_HASKELL__"]
 wayOptP _ WayGran     = ["-D__GRANSIM__"]
 wayOptP _ WayNDP      = []
+wayOptP _ WayReplay   = ["-DREPLAY"]
+wayOptP _ WayReplayLazy = ["-DREPLAY", "-DREPLAY_LAZY"]
 
 whenGeneratingDynamicToo :: MonadIO m => DynFlags -> m () -> m ()
 whenGeneratingDynamicToo dflags f = ifGeneratingDynamicToo dflags f (return ())
@@ -2123,6 +2149,8 @@ dynamic_flags = [
   , Flag "debug"          (NoArg (addWay WayDebug))
   , Flag "ndp"            (NoArg (addWay WayNDP))
   , Flag "threaded"       (NoArg (addWay WayThreaded))
+  , Flag "replay"         (NoArg (addWay WayReplay))
+  , Flag "replay-lbh"     (NoArg (addWay WayReplayLazy))
 
   , Flag "ticky"          (NoArg (setGeneralFlag Opt_Ticky >> addWay WayDebug))
 

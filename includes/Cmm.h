@@ -39,8 +39,8 @@
 #define TRACING
 #endif
 
-#if defined(TRACING)
-#define REPLAY
+#if defined(REPLAY)
+#define TRACING
 #endif
 
 #include "ghcconfig.h"
@@ -825,5 +825,37 @@
       __bd = Bdescr(__p);                                       \
       __gen = TO_W_(bdescr_gen_no(__bd));                       \
       if (__gen > 0) { recordMutableCap(__p, __gen); }
+
+#if defined(REPLAY) && defined(THREADED_RTS)
+#define REPLAY_SHIFT        48
+#define REPLAY_MASK         ((1 << REPLAY_SHIFT) - 1)
+#define REPLAY_ID_ATOM      0x1111
+#define REPLAY_SPARK_ATOM   0x2222
+#define REPLAY_TSO_ATOM     0x3333
+#define REPLAY_SHARED_TSO   0x4444
+#define REPLAY_PTR_ATOM     0x5555
+
+#define REPLAY_ATOM(p)      (p >> REPLAY_SHIFT)
+#define REPLAY_ID(p)        %lobits32(p)
+#define REPLAY_TSO(p)       %zx32(%lobits16(p >> 32))
+#define REPLAY_PTR(p)       (p & REPLAY_MASK)
+#define REPLAY_IND_PTR(p)   (StgInd_indirectee(p) & REPLAY_MASK)
+
+#define REPLAY_SET_ID(p, tso)       (p | (REPLAY_ID_ATOM << REPLAY_SHIFT) \
+                                       | (TO_W_(StgTSO_id(tso)) << 32))
+
+#define REPLAY_ATOM_IS_THUNK(a)     (a == REPLAY_ID_ATOM || \
+                                     a == REPLAY_SPARK_ATOM)
+#define REPLAY_ATOM_IS_SHARED(a)    (a == REPLAY_SHARED_TSO ||  \
+                                     a == REPLAY_PTR_ATOM)
+#define REPLAY_IS_TSO(p)            (REPLAY_ATOM(p) == REPLAY_TSO_ATOM ||   \
+                                     REPLAY_ATOM(p) == REPLAY_SHARED_TSO)
+#define REPLAY_IS_BH(p)             (REPLAY_ATOM(p) == REPLAY_TSO_ATOM ||   \
+                                     REPLAY_ATOM(p) == REPLAY_SHARED_TSO || \
+                                     REPLAY_ATOM(p) == REPLAY_PTR_ATOM ||   \
+                                     (REPLAY_ATOM(p) == 0 && GETTAG(p) != 0))
+
+#define REPLAY_SET_PTR(p)   (p | (REPLAY_PTR_ATOM << REPLAY_SHIFT))
+#endif
 
 #endif /* CMM_H */

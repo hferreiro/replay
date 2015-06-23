@@ -287,6 +287,8 @@ int rts_isDynamic(void);
 // Returns true if the RTS is a replay-enabled version
 HsBool rtsReplayEnabled(void);
 
+W_ replayEnter(Capability *cap, StgClosure *p);
+
 /* -----------------------------------------------------------------------------
    RTS Exit codes
    -------------------------------------------------------------------------- */
